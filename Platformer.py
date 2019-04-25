@@ -1,18 +1,21 @@
 import pygame
 import sys
+import os
 
 # CONSTANTS
 # BASIC VISUALS
 SCRN_W = 500
 SCRN_H = 500
-TILE_W = 10
-TILE_H = 10
+PIXEL = 5
+TILE_W = 2 * PIXEL
+TILE_H = 2 * PIXEL
 FPS = 60
 DEBUG_FPS = 5
 
 # COLORS
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
 CYAN = (0, 255, 255)
 
 # DIRECTIONS
@@ -30,6 +33,7 @@ WALL = 2
 
 # MISC / UNSORTED
 GRAVITY = 0.4
+TERMINAL_VELOCITY = 15
 
 # INITIALIZATION
 pygame.init()
@@ -61,7 +65,7 @@ def debug(num, *args):
     string = ""
     for arg in args:
         string += repr(arg) + " "
-    text = TAHOMA.render(repr(string), False, WHITE)
+    text = TAHOMA.render(string, False, WHITE)
     postSurf.blit(text, (10, num * 10 + 10))
 
 
@@ -97,6 +101,66 @@ def y_of(row, direction=UP):
         return row * TILE_H + TILE_H
 
 
+class Sprite:
+    """stores a spritesheet made of all of a thing's animations"""
+    def __init__(self, sheet_path, frame_w, frame_h, frame_counts):
+        image = pygame.image.load(os.path.join("images", sheet_path))
+        self.full_w = image.get_width() * PIXEL
+        self.full_h = image.get_height() * PIXEL
+        self.surface = pygame.transform.scale(image, (self.full_w, self.full_h))
+        self.surface.set_colorkey(GREEN)
+
+        self.frame_w = frame_w * PIXEL
+        self.frame_h = frame_h * PIXEL
+        self.anim_count = int(self.full_w / frame_w)
+        self.frame_counts = frame_counts
+
+        self.current_frame = 0
+        self.current_anim = 0
+
+        self.delay = 0
+
+    def get_frame(self, anim_id, frame):
+        """returns a subsurface containing a frame of an animation"""
+        x = self.frame_w * anim_id
+        y = self.frame_h * frame
+        return self.surface.subsurface((x, y, self.frame_w, self.frame_h))
+
+    def get_now_frame(self):
+        """returns a subsurface containing the current frame"""
+        return self.get_frame(self.current_anim, self.current_frame)
+
+    def next_frame(self):
+        self.current_frame += 1
+        if self.current_frame >= self.frame_counts[self.current_anim]:
+            self.current_frame = 0
+
+    def prev_frame(self):
+        self.current_frame -= 1
+        if self.current_frame <= -1:
+            self.current_frame = self.frame_counts[self.current_anim] - 1
+
+    def change_anim(self, anim_id):
+        if anim_id >= self.anim_count:
+            print("change_anim() tried to change to a nonexistant animation.")
+
+        elif anim_id != self.current_anim:
+            self.current_anim = anim_id
+            self.current_frame = 0
+
+    def delay_next(self, delay):
+        """delays flipping to the next animation frame for some frames
+
+        note: must be called every frame of the delay"""
+        if not self.delay:
+            self.delay = delay
+        else:
+            self.delay -= 1
+
+            if self.delay == 0:
+                self.next_frame()
+
+
 class Grid:
     """the grid where all the tiles in the level are placed"""
     def __init__(self, width, height):
@@ -116,7 +180,7 @@ class Grid:
         if not self.out_of_bounds(col, row):
             self.grid[col][row] = kind
         else:
-            print("change_point() tried to add a tile out of bounds")
+            print("change_point() tried to add a tile out of bounds.")
 
     def change_rect(self, x, y, w, h, kind):
         """places a rectangle of tiles at the given coordinates"""
@@ -125,7 +189,7 @@ class Grid:
                 if not self.out_of_bounds(col, row):
                     self.grid[col][row] = kind
                 else:
-                    print("add_rect() tried to add a tile out of bounds.")
+                    print("change_rect() tried to add a tile out of bounds.")
 
     def tile_at(self, col, row):
         """returns the tile type at a certain position
@@ -291,8 +355,6 @@ class Body:
         else:
             dir_y = 0
 
-        debug(15, diff_x)
-
         for step in range(1, 5):
             left_x = self.x
             right_x = left_x + self.w - 1
@@ -311,8 +373,6 @@ class Body:
             top_y = self.y
             bottom_y = top_y + self.h - 1
 
-            debug(step + 10, left_x, right_x)
-
             if dir_x == LEFT:
                 if self.grid.collide_vert(left_x, top_y, bottom_y):
                     self.snap_x(col_at(left_x), RIGHT)
@@ -329,42 +389,71 @@ class Body:
         else:
             self.grounded = False
 
+    def try_fall(self):
+        if not self.grounded:
+            if self.yVel < TERMINAL_VELOCITY:
+                self.yAcc = GRAVITY
+            else:
+                self.yAcc = 0
+                self.yVel = TERMINAL_VELOCITY
+
+    def try_jump(self, power):
+        if self.grounded:
+            self.grounded = False
+            self.yVel = -power
+
 
 class Player:
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
+        self.sprite = None
 
     def move(self):
-        if not self.body.grounded:
-            self.body.yAcc = GRAVITY
+        self.body.try_fall()
         self.body.collide_stage()
-        debug(5, "xVel:", self.body.xVel)
-        debug(6, "yVel:", self.body.yVel)
         self.body.move()
 
+        debug(5, "xVel:", self.body.xVel)
+        debug(6, "yVel:", self.body.yVel)
+
     def draw(self):
-        pygame.draw.rect(postSurf, CYAN, self.body.gridbox)
+        postSurf.blit(self.sprite.get_now_frame(), (self.body.x, self.body.y))
 
 
-grid = Grid(50, 50)
+grid = Grid(50, 50)   # temporary level
 grid.change_rect(10, 42, 10, 1, WALL)
 grid.change_rect(13, 45, 20, 1, WALL)
 grid.change_rect(18, 48, 30, 1, WALL)
 grid.change_rect(40, 40, 5, 10, WALL)
-player = Player(380, 400, 10, 10, -2, -2)
-print(player.body.w, player.body.h)
+
+player = Player(380, 400, 5 * PIXEL, 5 * PIXEL, -2, -2)
+player.sprite = Sprite("test_player.png", 5, 5, (1, 5, 5))
+IDLE = 0
+MOVE_LEFT = 1
+MOVE_RIGHT = 2
+
 
 while True:
     keys = pygame.key.get_pressed()
 
-    if keys[pygame.K_w] and player.body.grounded:
-        player.body.grounded = False
-        player.body.yVel = -8
-    if keys[pygame.K_a]:
+    if keys[pygame.K_r]:
+        player.body.goto(SCRN_W / 2, 0)
+
+    if keys[pygame.K_UP] or keys[pygame.K_w]:
+        player.body.try_jump(5)
+
+    if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+        player.sprite.change_anim(MOVE_LEFT)
+        player.sprite.delay_next(2)
+
         player.body.xVel = -3
-    elif keys[pygame.K_d]:
+    elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+        player.sprite.change_anim(MOVE_RIGHT)
+        player.sprite.delay_next(2)
+
         player.body.xVel = 3
     else:
+        player.sprite.change_anim(IDLE)
         player.body.xVel = 0
 
     player.move()
@@ -372,9 +461,10 @@ while True:
     grid.draw()
     player.draw()
 
-    debug(0, "xDir:", player.body.xDir)
-    debug(1, "yDir:", player.body.yDir)
-    debug(2, "grounded:", player.body.grounded)
+    debug(0, "FPS: %.2f" % clock.get_fps())
+    debug(1, "xDir:", player.body.xDir)
+    debug(2, "yDir:", player.body.yDir)
+    debug(3, "grounded:", player.body.grounded)
 
     if keys[pygame.K_f]:
         update(True)
