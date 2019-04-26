@@ -36,6 +36,8 @@ GRAVITY = 0.4
 TERMINAL_VELOCITY = 15
 
 # INITIALIZATION
+pygame.mixer.init(44100, -16, 2, 512)
+pygame.mixer.set_num_channels(16)
 pygame.init()
 postSurf = pygame.display.set_mode((SCRN_W, SCRN_H))
 
@@ -159,6 +161,33 @@ class Sprite:
 
             if self.delay == 0:
                 self.next_frame()
+
+
+class Soundboard:
+    def __init__(self):
+        self.music_id = 0
+        self.sounds = []
+
+    def add(self, file_path):
+        file_path = os.path.join("sounds", file_path)
+        self.sounds.append(pygame.mixer.Sound(file_path))
+
+    def play(self, sound_id):
+        self.sounds[sound_id].play()
+
+    def stop(self, sound_id):
+        self.sounds[sound_id].stop()
+
+    def play_music(self, sound_id, fade_in=0):
+        self.music_id = sound_id
+        self.sounds[sound_id].play(-1, 0, fade_in)
+
+    def fade_music(self, time):
+        self.sounds[self.music_id].fadeout(time)
+
+    def change_music(self, sound_id, fade_in=0):
+        self.fade_music(fade_in)
+        self.play_music(sound_id)
 
 
 class Grid:
@@ -398,6 +427,8 @@ class Body:
                 self.yVel = TERMINAL_VELOCITY
 
     def try_jump(self, power):
+        soundboard.stop(SOUND_JUMP)
+        soundboard.play(SOUND_JUMP)
         if self.grounded:
             self.grounded = False
             self.yVel = -power
@@ -420,6 +451,16 @@ class Player:
         postSurf.blit(self.sprite.get_now_frame(), (self.body.x, self.body.y))
 
 
+soundboard = Soundboard()
+soundboard.add("test_jump.wav")
+soundboard.add("test_sound.wav")
+soundboard.add("test_music.wav")
+soundboard.add("test_loop.wav")
+SOUND_JUMP = 0
+SOUND_TEST = 1
+SOUND_TEST_MUSIC = 2
+SOUND_TEST_LOOP = 3
+
 grid = Grid(50, 50)   # temporary level
 grid.change_rect(10, 42, 10, 1, WALL)
 grid.change_rect(13, 45, 20, 1, WALL)
@@ -432,13 +473,16 @@ IDLE = 0
 MOVE_LEFT = 1
 MOVE_RIGHT = 2
 
+soundboard.play_music(SOUND_TEST_LOOP, 5000)
 
 while True:
     keys = pygame.key.get_pressed()
 
+    # debug keys
     if keys[pygame.K_r]:
         player.body.goto(SCRN_W / 2, 0)
 
+    # movement keys
     if keys[pygame.K_UP] or keys[pygame.K_w]:
         player.body.try_jump(5)
 
@@ -447,6 +491,7 @@ while True:
         player.sprite.delay_next(2)
 
         player.body.xVel = -3
+
     elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
         player.sprite.change_anim(MOVE_RIGHT)
         player.sprite.delay_next(2)
