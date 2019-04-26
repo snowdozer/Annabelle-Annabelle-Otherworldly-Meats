@@ -172,8 +172,11 @@ class Soundboard:
         file_path = os.path.join("sounds", file_path)
         self.sounds.append(pygame.mixer.Sound(file_path))
 
-    def play(self, sound_id):
-        self.sounds[sound_id].play()
+    def play(self, sound_id, loops=0):
+        self.sounds[sound_id].play(loops)
+
+    def fade(self, sound_id, time):
+        self.sounds[sound_id].fade(time)
 
     def stop(self, sound_id):
         self.sounds[sound_id].stop()
@@ -186,8 +189,58 @@ class Soundboard:
         self.sounds[self.music_id].fadeout(time)
 
     def change_music(self, sound_id, fade_in=0):
+        """fades one music track into another"""
         self.fade_music(fade_in)
         self.play_music(sound_id)
+
+
+class Camera:
+    def __init__(self):
+        self.body = Body(int(SCRN_W / 2), int(SCRN_H / 2), 0, 0)
+        self.focus_body = None
+        self.constrain_x = True
+        self.constrain_y = True
+
+    def change_focus(self, body):
+        """centers the camera around a new body"""
+        self.focus_body = body
+
+    def step_to(self, x, y):
+        """moves one step towards a specific point"""
+        distance_x = int((x - self.body.x) / 10)
+        distance_y = int((y - self.body.y) / 10)
+        self.body.goto(self.body.x + distance_x, self.body.y + distance_y)
+
+    def focus(self, x_off=0, y_off=0):
+        """moves towards the focus point
+
+        you can focus some distance away from the body using the offsets"""
+        if self.constrain_x:
+            x = self.body.x
+        else:
+            x = self.focus_body.x + int(self.focus_body.w / 2)
+
+        if self.constrain_y:
+            y = self.body.y
+        else:
+            y = self.focus_body.y + int(self.focus_body.h / 2)
+
+        debug(12, "focus_x", x)
+        debug(13, "focus_y", y)
+
+        self.step_to(x + x_off, y + y_off)
+
+    def autolock(self, level):
+        """automatically locks the camera depending on the size of the level"""
+        if level.GRID_W * TILE_W > SCRN_W:
+            self.constrain_x = False
+        else:
+            self.constrain_x = True
+
+        if level.GRID_H * TILE_H > SCRN_H:
+            self.constrain_y = False
+        else:
+            self.constrain_y = True
 
 
 class Grid:
@@ -195,6 +248,8 @@ class Grid:
     def __init__(self, width, height):
         self.GRID_W = width
         self.GRID_H = height
+        self.FULL_W = width * TILE_W
+        self.FULL_H = height * TILE_H
         self.grid = [[EMPTY for _ in range(height)] for _ in range(width)]
 
     def out_of_bounds(self, col, row):
@@ -461,17 +516,22 @@ SOUND_TEST = 1
 SOUND_TEST_MUSIC = 2
 SOUND_TEST_LOOP = 3
 
-grid = Grid(50, 50)   # temporary level
+grid = Grid(50, 51)   # temporary level
 grid.change_rect(10, 42, 10, 1, WALL)
 grid.change_rect(13, 45, 20, 1, WALL)
 grid.change_rect(18, 48, 30, 1, WALL)
 grid.change_rect(40, 40, 5, 10, WALL)
+levelSurf = pygame.Surface((grid.FULL_W, grid.FULL_H))
 
 player = Player(380, 400, 5 * PIXEL, 5 * PIXEL, -2, -2)
 player.sprite = Sprite("test_player.png", 5, 5, (1, 5, 5))
 IDLE = 0
 MOVE_LEFT = 1
 MOVE_RIGHT = 2
+
+camera = Camera()
+camera.autolock(grid)
+camera.change_focus(player.body)
 
 soundboard.play_music(SOUND_TEST_LOOP, 5000)
 
@@ -510,6 +570,10 @@ while True:
     debug(1, "xDir:", player.body.xDir)
     debug(2, "yDir:", player.body.yDir)
     debug(3, "grounded:", player.body.grounded)
+
+    camera.focus()
+    debug(9, "camera.x:", camera.body.x)
+    debug(10, "camera.y:", camera.body.y)
 
     if keys[pygame.K_f]:
         update(True)
