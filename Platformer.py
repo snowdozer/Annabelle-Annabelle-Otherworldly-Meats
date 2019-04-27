@@ -18,6 +18,7 @@ DEBUG_FPS = 5
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
+PALE_RED = (255, 100, 100)
 GREEN = (0, 255, 0)
 CYAN = (0, 255, 255)
 YELLOW = (255, 255, 0)
@@ -119,15 +120,26 @@ def y_of(row, direction=UP):
 
 
 def angle_of(pos1, pos2):
+    """returns the angle in radians between two points from standard position"""
     delta_x = pos2[0] - pos1[0]
     delta_y = pos2[1] - pos1[1]
     return math.atan2(delta_y, delta_x)
 
 
 def angle_pos(center_pos, angle, distance):
+    """returns a point a certain distance away at a certain angle"""
     delta_x = math.cos(angle) * distance
     delta_y = math.sin(angle) * distance
     return center_pos[0] + delta_x, center_pos[1] + delta_y
+
+
+def distance(pos1, pos2):
+    """returns the distance between two points"""
+    return math.sqrt((pos2[0] - pos1[0]) ** 2 + (pos2[1] - pos1[1]) ** 2)
+
+
+def body_distance(body1, body2):
+    return distance(body1.pos_center(), body2.pos_center())
 
 
 class Sprite:
@@ -619,6 +631,7 @@ class Player:
     BULLET_DELAY = 15
     INITIAL_COINS = 0
     MAX_CORPSES = 5
+    PICKUP_DISTANCE = PIXEL*5
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
@@ -712,6 +725,22 @@ class Player:
                 enemy.health.change(-1)
                 self.destroy_bullet(i)
 
+    def select_corpse(self):
+        """returns the closest corpse to mouse within pickup range"""
+        lowest_dist = self.PICKUP_DISTANCE
+        lowest_dist_enemy = None
+        for enemy in enemies:
+            if enemy.dead:
+                player_dist = body_distance(player.body, enemy.body)
+
+                if player_dist < self.PICKUP_DISTANCE:
+                    mouse_dist = distance(mouse_pos, enemy.body.pos_center())
+
+                    if mouse_dist < lowest_dist:
+                        lowest_dist = mouse_dist
+                        lowest_dist_enemy = enemy
+
+        return lowest_dist_enemy
 
     def pickup_corpse(self, enemy):
         if self.corpse_count < self.MAX_CORPSES:
@@ -740,7 +769,12 @@ class Player:
         else:
             player.bullet_timer = 0
 
-        if not
+        selected_corpse = self.select_corpse()
+        if selected_corpse:
+            if right_mouse_released:
+                self.pickup_corpse(selected_corpse)
+            else:
+                selected_corpse.draw_selected()
 
         self.move()
         self.draw(postSurf)
@@ -749,31 +783,19 @@ class Player:
         self.draw_bullets(postSurf)
 
 
-def draw_enemies():
-    for enemy in enemies:
-        enemy.draw()
-
-
-def move_enemies():
+def update_enemies():
     for enemy in enemies:
         if not enemy.dead:
             enemy.move()
 
-
-def hurt_enemies():
-    for enemy in enemies:
-        player.check_hit(enemy)
+        player.check_hit(enemy)   # hurt and kill enemies
         if enemy.health.zero():
             if not enemy.dead:
                 enemy.die()
             else:
                 enemy.remove()
 
-
-def update_enemies():
-    move_enemies()
-    hurt_enemies()
-    draw_enemies()
+        enemy.draw()
 
 
 class Health:
@@ -878,6 +900,9 @@ class Shadowhound:
         else:
             self.body.debug_hitbox(postSurf, CYAN)
 
+    def draw_selected(self):
+        self.body.debug_hitbox(postSurf, PALE_RED)
+
     def die(self):
         self.dead = True
         self.body.stop_x()
@@ -931,10 +956,21 @@ camera = Camera()
 camera.autolock(grid)
 camera.change_focus(player.body)
 
+right_mouse_last = False
+right_mouse_released = False
+
 while True:
     keys = pygame.key.get_pressed()
     mouse_pos = pygame.mouse.get_pos()
     mouse_pressed = pygame.mouse.get_pressed()
+
+    if right_mouse_released:
+        right_mouse_released = False
+
+    if right_mouse_last and not mouse_pressed[2]:
+        right_mouse_released = True
+
+    right_mouse_last = mouse_pressed[2]
 
     # debug keys
     if keys[pygame.K_r]:
@@ -959,6 +995,7 @@ while True:
     debug(9, "enemies", enemies)
 
     debug(10, "coins", player.coins)
+    debug(12, "right_click", right_mouse_released)
 
     if keys[pygame.K_f]:
         update(True)
