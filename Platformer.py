@@ -45,6 +45,8 @@ GRAVITY = 0.4
 TERMINAL_VELOCITY = 15
 
 # INITIALIZATION
+os.environ['SDL_VIDEO_CENTERED'] = '1'
+
 pygame.mixer.init(44100, -16, 2, 512)
 pygame.mixer.set_num_channels(16)
 pygame.init()
@@ -616,6 +618,7 @@ class Player:
     BULLET_SIZE = PIXEL*2
     BULLET_DELAY = 15
     INITIAL_COINS = 0
+    MAX_CORPSES = 5
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
@@ -623,10 +626,30 @@ class Player:
         self.bullets = []
         self.bullet_timer = 0
         self.coins = self.INITIAL_COINS
+        self.corpse_count = 0
+        self.corpses = []
 
     def move(self):
         self.body.collide_stage(PLAYER)
         self.body.move()
+
+    def move_up(self):
+        self.body.yVel = -6
+
+    def move_down(self):
+        self.body.yVel = 6
+
+    def move_left(self):
+        self.sprite.change_anim(MOVE_LEFT)
+        self.sprite.delay_next(2)
+
+        self.body.xVel = -6
+
+    def move_right(self):
+        self.sprite.change_anim(MOVE_RIGHT)
+        self.sprite.delay_next(2)
+
+        self.body.xVel = 6
 
     def move_bullets(self):
         i = len(self.bullets)
@@ -689,7 +712,36 @@ class Player:
                 enemy.health.change(-1)
                 self.destroy_bullet(i)
 
+
+    def pickup_corpse(self, enemy):
+        if self.corpse_count < self.MAX_CORPSES:
+            self.corpse_count += 1
+            self.corpses.append(enemy)
+            enemy.remove()
+
     def update(self):
+        if keys[pygame.K_UP] or keys[pygame.K_w]:
+            self.move_up()
+        elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
+            self.move_down()
+        else:
+            self.body.stop_y()
+
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            self.move_left()
+        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            self.move_right()
+        else:
+            self.sprite.change_anim(IDLE)
+            self.body.stop_x()
+
+        if mouse_pressed[0]:
+            player.try_shoot()
+        else:
+            player.bullet_timer = 0
+
+        if not
+
         self.move()
         self.draw(postSurf)
         self.draw_gun(postSurf)
@@ -888,34 +940,6 @@ while True:
     if keys[pygame.K_r]:
         player.body.goto(SCRN_W / 2, 0)
 
-    if mouse_pressed[0]:
-        player.try_shoot()
-    else:
-        player.bullet_timer = 0
-
-    # movement keys
-    if keys[pygame.K_UP] or keys[pygame.K_w]:
-        player.body.yVel = -6
-    elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
-        player.body.yVel = 6
-    else:
-        player.body.yVel = 0
-
-    if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-        player.sprite.change_anim(MOVE_LEFT)
-        player.sprite.delay_next(2)
-
-        player.body.xVel = -6
-
-    elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-        player.sprite.change_anim(MOVE_RIGHT)
-        player.sprite.delay_next(2)
-
-        player.body.xVel = 6
-    else:
-        player.sprite.change_anim(IDLE)
-        player.body.xVel = 0
-
     update_enemies()
 
     grid.draw(postSurf)
@@ -929,10 +953,12 @@ while True:
 
     debug(5, "gun_pos", player.gun_pos())
 
-    debug(7, "enemy_vel", enemies[0].body.xVel, enemies[0].body.yVel)
-    debug(8, "enemy health", enemies[0].health.current)
+    # debug(7, "enemy_vel", enemies[0].body.xVel, enemies[0].body.yVel)
+    # debug(8, "enemy health", enemies[0].health.current)
 
     debug(9, "enemies", enemies)
+
+    debug(10, "coins", player.coins)
 
     if keys[pygame.K_f]:
         update(True)
