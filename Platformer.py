@@ -2,22 +2,25 @@ import pygame
 import sys
 import os
 import math
+import random
 
 # CONSTANTS
 # BASIC VISUALS
 SCRN_W = 500
 SCRN_H = 500
 PIXEL = 10
-TILE_W = PIXEL*2
-TILE_H = PIXEL*2
+TILE_W = PIXEL*6
+TILE_H = PIXEL*6
 FPS = 60
 DEBUG_FPS = 5
 
 # COLORS
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
+RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 CYAN = (0, 255, 255)
+YELLOW = (255, 255, 0)
 
 # DIRECTIONS
 LEFT = 1
@@ -30,7 +33,12 @@ BOTTOM = DOWN
 # TILE TYPES
 VOID = 0
 EMPTY = 1
-WALL = 2
+ALL_WALL = 2
+PLAYER_WALL = 3
+ENEMY_WALL = 4
+ALL = 0
+PLAYER = 1
+ENEMY = 2
 
 # MISC / UNSORTED
 GRAVITY = 0.4
@@ -70,6 +78,10 @@ def debug(num, *args):
         string += repr(arg) + " "
     text = TAHOMA.render(string, False, WHITE)
     postSurf.blit(text, (10, num * 10 + 10))
+
+
+def debug_point(pos):
+    pygame.draw.circle(postSurf, YELLOW, pos, 3)
 
 
 def col_at(x):
@@ -208,11 +220,24 @@ class Soundboard:
 
 
 class Camera:
+    """it's a camera
+
+    EDGE_OFFSET is the extra bit off the limit you want to show"""
+    EDGE_OFFSET = PIXEL*5
+
     def __init__(self):
-        self.body = Body(int(SCRN_W / 2), int(SCRN_H / 2), 0, 0)
+        half_width = int(SCRN_W / 2)
+        half_height = int(SCRN_H / 2)
+
+        self.body = Body(half_width, half_height, 0, 0)
         self.focus_body = None
         self.constrain_x = True
         self.constrain_y = True
+
+        self.LIMIT_LEFT = half_width - self.EDGE_OFFSET
+        self.LIMIT_RIGHT = grid.FULL_W - half_width + self.EDGE_OFFSET
+        self.LIMIT_UP = half_height - self.EDGE_OFFSET
+        self.LIMIT_DOWN = grid.FULL_H - half_height + self.EDGE_OFFSET
 
     def change_focus(self, body):
         """centers the camera around a new body"""
@@ -233,10 +258,20 @@ class Camera:
         else:
             x = self.focus_body.x + int(self.focus_body.w / 2)
 
+            if x < self.LIMIT_LEFT:   # stops camera at edge of map
+                x += self.LIMIT_LEFT - x
+            elif x > self.LIMIT_RIGHT:
+                x += self.LIMIT_RIGHT - x
+
         if self.constrain_y:
             y = self.body.y
         else:
             y = self.focus_body.y + int(self.focus_body.h / 2)
+
+            if y < self.LIMIT_UP:
+                y += self.LIMIT_UP - y
+            elif y > self.LIMIT_DOWN:
+                y += self.LIMIT_DOWN - y
 
         self.step_to(x + x_off, y + y_off)
 
@@ -301,31 +336,36 @@ class Grid:
 
         return VOID
 
-    def is_solid(self, col, row):
+    def is_solid(self, col, row, requester=ALL):
         """returns whether a tile is solid or not
 
-        currently, the only non-solid tile is the empty tile"""
-        if self.tile_at(col, row) == EMPTY:
-            return False
+        you can specify which entity specifically is asking for it"""
+        tile = self.tile_at(col, row)
+        if tile == ALL_WALL:
+            return True
+        elif (requester == PLAYER or requester == ALL) and tile == PLAYER_WALL:
+            return True
+        elif (requester == ENEMY or requester == ALL) and tile == ENEMY_WALL:
+            return True
 
-        return True
+        return False
 
-    def collide_vert(self, x, y1, y2):
+    def collide_vert(self, x, y1, y2, requester=ALL):
         col = col_at(x)
         start_row = row_at(y1)
         end_row = row_at(y2)
         for row in range(start_row, end_row + 1):
-            if self.is_solid(col, row):
+            if self.is_solid(col, row, requester):
                 return True
 
         return False
 
-    def collide_horiz(self, x1, x2, y):
+    def collide_horiz(self, x1, x2, y, requester=ALL):
         start_col = col_at(x1)
         end_col = col_at(x2)
         row = row_at(y)
         for col in range(start_col, end_col + 1):
-            if self.is_solid(col, row):
+            if self.is_solid(col, row, requester):
                 return True
 
         return False
@@ -337,16 +377,34 @@ class Grid:
         self.surf.fill(GREEN)
         for row in range(self.GRID_H):
             for col in range(self.GRID_W):
-                if self.tile_at(col, row) == WALL:
-                    rect = (col * TILE_W, row * TILE_H, TILE_W, TILE_H)
+                rect = (col * TILE_W, row * TILE_H, TILE_W, TILE_H)
+                tile = self.tile_at(col, row)
+                if tile == ALL_WALL:
                     pygame.draw.rect(self.surf, WHITE, rect)
+                elif tile == PLAYER_WALL:
+                    pygame.draw.rect(self.surf, CYAN, rect)
+                elif tile == ENEMY_WALL:
+                    pygame.draw.rect(self.surf, RED, rect)
 
     def draw(self, surf):
         surf.blit(self.surf, camera.pos((0, 0)))
 
 
+def collide(rect1, rect2):
+    return pygame.Rect(rect1).colliderect(rect2)
+
+
+# CELL_W = 10
+# CELL_H = 10
+# partition = [[[] for y in range(CELL_H)] for x in range(CELL_W)]
+
+
 class Body:
-    """the skeleton of anything that moves and lives"""
+    """the skeleton of anything that moves and lives
+
+    COLLISION_STEPS is the amount of substeps to check each step"""
+    COLLISION_STEPS = 4
+
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.x = x
         self.y = y
@@ -401,9 +459,13 @@ class Body:
         else:
             self.yDir = 0
 
-        self.check_ground()
-
         self.goto(self.x, self.y)
+
+    def out_of_bounds(self):
+        if -50 <= self.x < grid.FULL_W + 50 and -50 <= self.y < grid.FULL_H + 50:
+            return False
+
+        return True
 
     def next_x(self):
         """returns the x position of the body on the next frame"""
@@ -455,7 +517,7 @@ class Body:
             self.goto(self.x, y_of(row, BOTTOM))
             self.stop_y()
 
-    def collide_stage(self):
+    def collide_stage(self, requester=ALL):
         """checks collision with stage and updates movement accordingly"""
         diff_x = self.next_x() - self.x
         diff_y = self.next_y() - self.y
@@ -474,17 +536,17 @@ class Body:
         else:
             dir_y = 0
 
-        for step in range(1, 5):
+        for step in range(1, self.COLLISION_STEPS + 1):
             left_x = self.x
             right_x = left_x + self.w - 1
-            top_y = int(self.y + (diff_y * (step / 4)))
+            top_y = int(self.y + (diff_y * (step / self.COLLISION_STEPS)))
             bottom_y = top_y + self.h - 1
 
             if dir_y == UP:
-                if self.grid.collide_horiz(left_x, right_x, top_y):
+                if self.grid.collide_horiz(left_x, right_x, top_y, requester):
                     self.snap_y(row_at(top_y), BOTTOM)
             elif dir_y == DOWN:
-                if self.grid.collide_horiz(left_x, right_x, bottom_y):
+                if self.grid.collide_horiz(left_x, right_x, bottom_y, requester):
                     self.snap_y(row_at(bottom_y), TOP)
 
             left_x = int(self.x + (diff_x * (step / 4)))
@@ -493,10 +555,10 @@ class Body:
             bottom_y = top_y + self.h - 1
 
             if dir_x == LEFT:
-                if self.grid.collide_vert(left_x, top_y, bottom_y):
+                if self.grid.collide_vert(left_x, top_y, bottom_y, requester):
                     self.snap_x(col_at(left_x), RIGHT)
             elif dir_x == RIGHT:
-                if self.grid.collide_vert(right_x, top_y, bottom_y):
+                if self.grid.collide_vert(right_x, top_y, bottom_y, requester):
                     self.snap_x(col_at(right_x), LEFT)
 
     def check_ground(self):
@@ -522,6 +584,18 @@ class Body:
             self.grounded = False
             self.yVel = -power
 
+    def debug_gridbox(self, surf, color=CYAN):
+        pos = camera.pos((self.x, self.y))
+        x = pos[0]
+        y = pos[1]
+        pygame.draw.rect(surf, color, (x, y, self.w, self.h))
+
+    def debug_hitbox(self, surf, color=RED):
+        pos = camera.pos((self.hitbox.x, self.hitbox.y))
+        x = pos[0]
+        y = pos[1]
+        pygame.draw.rect(surf, color, (x, y, self.hitbox.w, self.hitbox.h))
+
 
 class Bullet:
     def __init__(self, x_vel, y_vel, x, y, w, h, extend_x=0, extend_y=0):
@@ -529,23 +603,42 @@ class Bullet:
         self.body.xVel = x_vel
         self.body.yVel = y_vel
 
+    def in_wall(self):
+        col = col_at(self.body.next_x())
+        row = row_at(self.body.next_y())
+        if grid.is_solid(col, row):
+            return True
+
+        return False
+
 
 class Player:
-    BULLET_SIZE = PIXEL * 2
+    BULLET_SIZE = PIXEL*2
+    BULLET_DELAY = 15
+    INITIAL_COINS = 0
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = None
         self.bullets = []
         self.bullet_timer = 0
+        self.coins = self.INITIAL_COINS
 
     def move(self):
-        self.body.collide_stage()
+        self.body.collide_stage(PLAYER)
         self.body.move()
 
     def move_bullets(self):
-        for bullet in self.bullets:
-            bullet.body.move()
+        i = len(self.bullets)
+        for bullet in reversed(self.bullets):
+            i -= 1
+            if bullet.in_wall():
+                self.destroy_bullet(i)
+            else:
+                bullet.body.move()
+
+    def destroy_bullet(self, index):
+        del self.bullets[index]
 
     def gun_pos(self):
         angle = angle_of(self.body.screen_pos_center(), mouse_pos)
@@ -567,7 +660,7 @@ class Player:
 
     def try_shoot(self):
         if self.bullet_timer == 0:
-            self.bullet_timer = 20
+            self.bullet_timer = self.BULLET_DELAY
             self.shoot()
         else:
             self.bullet_timer -= 1
@@ -587,12 +680,161 @@ class Player:
             pos = camera.pos((bullet.body.x, bullet.body.y))
             pygame.draw.circle(surf, CYAN, pos, int(self.BULLET_SIZE / 2))
 
+    def check_hit(self, enemy):
+        """determines if a bullet hits an enemy"""
+        i = len(self.bullets)
+        for bullet in self.bullets:
+            i -= 1
+            if collide(enemy.body.hitbox, bullet.body.hitbox):
+                enemy.health.change(-1)
+                self.destroy_bullet(i)
+
     def update(self):
         self.move()
         self.draw(postSurf)
         self.draw_gun(postSurf)
         self.move_bullets()
         self.draw_bullets(postSurf)
+
+
+def draw_enemies():
+    for enemy in enemies:
+        enemy.draw()
+
+
+def move_enemies():
+    for enemy in enemies:
+        if not enemy.dead:
+            enemy.move()
+
+
+def hurt_enemies():
+    for enemy in enemies:
+        player.check_hit(enemy)
+        if enemy.health.zero():
+            if not enemy.dead:
+                enemy.die()
+            else:
+                enemy.remove()
+
+
+def update_enemies():
+    move_enemies()
+    hurt_enemies()
+    draw_enemies()
+
+
+class Health:
+    PIP_SIZE = PIXEL
+    MAX_H = PIXEL*3
+
+    def __init__(self, max_health, current=0):
+        self.max = max_health
+        self.MAX_W = self.PIP_SIZE * max_health
+        if current == 0:
+            self.current = max_health
+            self.w = self.MAX_W
+        else:
+            self.current = current
+            self.w = self.PIP_SIZE * current
+
+    def change(self, amount):
+        self.current += amount
+        if self.current > self.max:
+            self.current = self.max
+
+        self.w += self.PIP_SIZE * amount
+
+    def change_max(self, amount):
+        self.max += amount
+        self.MAX_W += self.PIP_SIZE * amount
+
+    def refill(self):
+        self.current = self.max
+        self.w = self.MAX_W
+
+    def draw(self, surf, body):
+        x = body.x - PIXEL*3
+        y = body.pos_center[1] - int(self.w / 2)
+        pygame.draw.rect(surf, RED, (x, y, self.w, self.MAX_H))
+
+    def zero(self):
+        if self.current <= 0:
+            return True
+
+        return False
+
+
+class Shadowhound:
+    sprite = None
+    ALIVE_HEALTH = 12
+    CORPSE_HEALTH = 15
+
+    def __init__(self, x, y):
+        self.body = Body(x, y, PIXEL*4, PIXEL*3)
+        self.health = Health(self.ALIVE_HEALTH)
+        self.cycle = 120
+        self.timer = self.cycle
+        self.dead = False
+        self.hasCoin = False
+        self.awayAngle = random.vonmisesvariate(3/2 * math.pi, 1) - math.pi
+
+    def leap_to(self):
+        """leaps towards the player"""
+        angle = angle_of(self.body.pos_center(), player.body.pos_center())
+        vel = angle_pos((0, 0), angle, 5)
+        self.body.xVel = vel[0]
+        self.body.yVel = vel[1]
+
+    def leap_away(self):
+        """leaps away in a direction that was calculated randomly"""
+        vel = angle_pos((0, 0), self.awayAngle, 5)
+        self.body.xVel = vel[0]
+        self.body.yVel = vel[1]
+
+    def land(self):
+        self.body.stop_x()
+        self.body.stop_y()
+
+    def move(self):
+        self.timer -= 1
+        if self.timer == 30:
+            if self.hasCoin:
+                self.leap_away()
+            else:
+                self.leap_to()
+        elif self.timer == 0:
+            self.timer = self.cycle
+            self.land()
+
+        if self.timer <= 30:
+            self.body.collide_stage(ENEMY)
+            self.body.move()
+
+            if collide(self.body.hitbox, player.body.hitbox):
+                self.hasCoin = True
+                player.coins -= 1
+
+            if self.body.out_of_bounds():
+                self.remove()
+
+    def draw(self):
+        if self.dead:
+            self.body.debug_hitbox(postSurf, RED)
+        elif self.hasCoin:
+            self.body.debug_hitbox(postSurf, YELLOW)
+        else:
+            self.body.debug_hitbox(postSurf, CYAN)
+
+    def die(self):
+        self.dead = True
+        self.body.stop_x()
+        self.body.stop_y()
+        self.health.max = self.CORPSE_HEALTH
+        self.health.refill()
+
+    def remove(self):
+        enemies.remove(self)
 
 
 soundboard = Soundboard()
@@ -603,19 +845,34 @@ SOUND_JUMP = 0
 MUSIC_LOOP1 = 1
 MUSIC_LOOP2 = 2
 
-grid = Grid(50, 25)   # temporary level
-grid.change_rect(5, 21, 10, 1, WALL)
-grid.change_rect(13, 10, 20, 1, WALL)
-grid.change_rect(18, 15, 30, 1, WALL)
-grid.change_rect(17, 15, 5, 10, WALL)
+SHOP_SPLIT = 5
+grid = Grid(15, 20)   # temporary level
+grid.change_rect(0, SHOP_SPLIT, 15, 1, PLAYER_WALL)   # outline
+grid.change_rect(0, SHOP_SPLIT, 1, 15, PLAYER_WALL)
+grid.change_rect(0, SHOP_SPLIT + 14, 15, 1, PLAYER_WALL)
+grid.change_rect(14, SHOP_SPLIT, 1, 15, PLAYER_WALL)
+
+grid.change_point(3, SHOP_SPLIT + 3, ALL_WALL)   # pillars
+grid.change_point(3, SHOP_SPLIT + 11, ALL_WALL)
+grid.change_point(11, SHOP_SPLIT + 3, ALL_WALL)
+grid.change_point(11, SHOP_SPLIT + 11, ALL_WALL)
+
+grid.change_rect(3, 0, 8, 1, ALL_WALL)   # shop walls
+grid.change_rect(3, 0, 1, SHOP_SPLIT, ALL_WALL)
+grid.change_rect(11, 0, 1, SHOP_SPLIT, ALL_WALL)
+grid.change_rect(3, SHOP_SPLIT, 9, 1, ALL_WALL)
+grid.change_rect(6, SHOP_SPLIT, 3, 1, ENEMY_WALL)   # shop entrance
+
 grid.create_surf()
 
-player = Player(100, 100, PIXEL*5, PIXEL*5, -2, -2)
-player.sprite = Sprite("test_player.png", 5, 5, (1, 5, 5))
+player = Player(500, 200, PIXEL*4, PIXEL*4, -2, -2)
+player.sprite = Sprite("test_player.png", 4, 4, (1, 5, 5))
 IDLE = 0
 MOVE_LEFT = 1
 MOVE_RIGHT = 2
 
+enemies = [Shadowhound(500, 500),
+           Shadowhound(300, 500)]
 enemy_bullets = []
 
 camera = Camera()
@@ -638,9 +895,9 @@ while True:
 
     # movement keys
     if keys[pygame.K_UP] or keys[pygame.K_w]:
-        player.body.yVel = -4
+        player.body.yVel = -6
     elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
-        player.body.yVel = 4
+        player.body.yVel = 6
     else:
         player.body.yVel = 0
 
@@ -648,16 +905,18 @@ while True:
         player.sprite.change_anim(MOVE_LEFT)
         player.sprite.delay_next(2)
 
-        player.body.xVel = -4
+        player.body.xVel = -6
 
     elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
         player.sprite.change_anim(MOVE_RIGHT)
         player.sprite.delay_next(2)
 
-        player.body.xVel = 4
+        player.body.xVel = 6
     else:
         player.sprite.change_anim(IDLE)
         player.body.xVel = 0
+
+    update_enemies()
 
     grid.draw(postSurf)
     player.update()
@@ -669,6 +928,11 @@ while True:
     debug(3, "camera.y:", camera.body.y)
 
     debug(5, "gun_pos", player.gun_pos())
+
+    debug(7, "enemy_vel", enemies[0].body.xVel, enemies[0].body.yVel)
+    debug(8, "enemy health", enemies[0].health.current)
+
+    debug(9, "enemies", enemies)
 
     if keys[pygame.K_f]:
         update(True)
