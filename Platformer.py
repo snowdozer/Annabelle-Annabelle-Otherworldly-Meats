@@ -126,10 +126,10 @@ def angle_of(pos1, pos2):
     return math.atan2(delta_y, delta_x)
 
 
-def angle_pos(center_pos, angle, distance):
+def angle_pos(center_pos, angle, dist):
     """returns a point a certain distance away at a certain angle"""
-    delta_x = math.cos(angle) * distance
-    delta_y = math.sin(angle) * distance
+    delta_x = math.cos(angle) * dist
+    delta_y = math.sin(angle) * dist
     return center_pos[0] + delta_x, center_pos[1] + delta_y
 
 
@@ -629,9 +629,9 @@ class Bullet:
 class Player:
     BULLET_SIZE = PIXEL*2
     BULLET_DELAY = 15
-    INITIAL_COINS = 0
+    INITIAL_COINS = 8
     MAX_CORPSES = 5
-    PICKUP_DISTANCE = PIXEL*5
+    PICKUP_DISTANCE = PIXEL*10
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
@@ -642,27 +642,66 @@ class Player:
         self.corpse_count = 0
         self.corpses = []
 
-    def move(self):
-        self.body.collide_stage(PLAYER)
-        self.body.move()
+        self.inShop = False
+        self.enteredShop = False
+        self.exitShop = False
 
+    def update_room(self):
+        if self.enteredShop:
+            self.enteredShop = False
+        if self.exitShop:
+            self.exitShop = False
+
+        if self.inShop:
+            if self.body.pos_center()[1] > SHOP_ENTER:
+                self.inShop = False
+                self.enteredShop = True
+                self.coins -= 1
+        else:
+            if self.body.pos_center()[1] < SHOP_ENTER:
+                self.inShop = True
+                self.enteredShop = True
+                self.coins -= 1
+
+    # movement speed is proportionate to the amount of corpses you carry
     def move_up(self):
-        self.body.yVel = -6
+        self.body.yVel = -6 + self.corpse_count
 
     def move_down(self):
-        self.body.yVel = 6
+        self.body.yVel = 6 - self.corpse_count
 
     def move_left(self):
         self.sprite.change_anim(MOVE_LEFT)
         self.sprite.delay_next(2)
 
-        self.body.xVel = -6
+        self.body.xVel = -6 + self.corpse_count
 
     def move_right(self):
         self.sprite.change_anim(MOVE_RIGHT)
         self.sprite.delay_next(2)
 
-        self.body.xVel = 6
+        self.body.xVel = 6 - self.corpse_count
+
+    def handle_movement(self):
+        if keys[pygame.K_UP] or keys[pygame.K_w]:
+            self.move_up()
+        elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
+            self.move_down()
+        else:
+            self.body.stop_y()
+
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            self.move_left()
+        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            self.move_right()
+        else:
+            self.sprite.change_anim(IDLE)
+            self.body.stop_x()
+
+        self.body.collide_stage(PLAYER)
+        self.body.move()
+
+        self.update_room()
 
     def move_bullets(self):
         i = len(self.bullets)
@@ -695,7 +734,7 @@ class Player:
                                    self.BULLET_SIZE, self.BULLET_SIZE))
 
     def try_shoot(self):
-        if self.bullet_timer == 0:
+        if self.bullet_timer == 0 and not self.inShop:
             self.bullet_timer = self.BULLET_DELAY
             self.shoot()
         else:
@@ -716,6 +755,14 @@ class Player:
             pos = camera.pos((bullet.body.x, bullet.body.y))
             pygame.draw.circle(surf, CYAN, pos, int(self.BULLET_SIZE / 2))
 
+    def draw_corpses(self, surf):
+        y = self.body.y + PIXEL * 1
+        for i, corpse in enumerate(self.corpses):
+            x = self.body.x + self.body.w - corpse.body.w
+            y -= corpse.body.h
+            corpse.body.goto(x, y)
+            corpse.draw(surf)
+
     def check_hit(self, enemy):
         """determines if a bullet hits an enemy"""
         i = len(self.bullets)
@@ -727,14 +774,15 @@ class Player:
 
     def select_corpse(self):
         """returns the closest corpse to mouse within pickup range"""
-        lowest_dist = self.PICKUP_DISTANCE
+        lowest_dist = SCRN_W * 2   # just a really big number
         lowest_dist_enemy = None
         for enemy in enemies:
             if enemy.dead:
                 player_dist = body_distance(player.body, enemy.body)
 
                 if player_dist < self.PICKUP_DISTANCE:
-                    mouse_dist = distance(mouse_pos, enemy.body.pos_center())
+                    enemy_pos = camera.pos(enemy.body.pos_center())
+                    mouse_dist = distance(mouse_pos, enemy_pos)
 
                     if mouse_dist < lowest_dist:
                         lowest_dist = mouse_dist
@@ -748,22 +796,12 @@ class Player:
             self.corpses.append(enemy)
             enemy.remove()
 
+    def sell_corpses(self):
+        self.coins += len(self.corpses)
+        self.corpse_count = 0
+        self.corpses = []
+
     def update(self):
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            self.move_up()
-        elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            self.move_down()
-        else:
-            self.body.stop_y()
-
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            self.move_left()
-        elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            self.move_right()
-        else:
-            self.sprite.change_anim(IDLE)
-            self.body.stop_x()
-
         if mouse_pressed[0]:
             player.try_shoot()
         else:
@@ -776,11 +814,16 @@ class Player:
             else:
                 selected_corpse.draw_selected()
 
-        self.move()
+        if self.inShop and right_mouse_released:
+            self.sell_corpses()
+
+        self.handle_movement()
         self.draw(postSurf)
-        self.draw_gun(postSurf)
+        if not self.inShop:
+            self.draw_gun(postSurf)
         self.move_bullets()
         self.draw_bullets(postSurf)
+        self.draw_corpses(postSurf)
 
 
 def update_enemies():
@@ -795,12 +838,13 @@ def update_enemies():
             else:
                 enemy.remove()
 
-        enemy.draw()
+        enemy.draw_health()
+        enemy.draw(postSurf)
 
 
 class Health:
-    PIP_SIZE = PIXEL
-    MAX_H = PIXEL*3
+    PIP_SIZE = int(PIXEL / 2)
+    MAX_H = PIXEL
 
     def __init__(self, max_health, current=0):
         self.max = max_health
@@ -819,18 +863,16 @@ class Health:
 
         self.w += self.PIP_SIZE * amount
 
-    def change_max(self, amount):
-        self.max += amount
-        self.MAX_W += self.PIP_SIZE * amount
+    def set_max(self, value):
+        self.max = value
+        self.MAX_W = self.PIP_SIZE * value
 
     def refill(self):
         self.current = self.max
         self.w = self.MAX_W
 
-    def draw(self, surf, body):
-        x = body.x - PIXEL*3
-        y = body.pos_center[1] - int(self.w / 2)
-        pygame.draw.rect(surf, RED, (x, y, self.w, self.MAX_H))
+    def draw(self, surf, pos):
+        pygame.draw.rect(surf, RED, (pos[0], pos[1], self.w, self.MAX_H))
 
     def zero(self):
         if self.current <= 0:
@@ -842,7 +884,7 @@ class Health:
 class Shadowhound:
     sprite = None
     ALIVE_HEALTH = 12
-    CORPSE_HEALTH = 15
+    CORPSE_HEALTH = 3
 
     def __init__(self, x, y):
         self.body = Body(x, y, PIXEL*4, PIXEL*3)
@@ -873,7 +915,7 @@ class Shadowhound:
     def move(self):
         self.timer -= 1
         if self.timer == 30:
-            if self.hasCoin:
+            if self.hasCoin or player.inShop:
                 self.leap_away()
             else:
                 self.leap_to()
@@ -885,29 +927,36 @@ class Shadowhound:
             self.body.collide_stage(ENEMY)
             self.body.move()
 
-            if collide(self.body.hitbox, player.body.hitbox):
+            if not self.hasCoin and collide(self.body.hitbox, player.body.hitbox):
                 self.hasCoin = True
                 player.coins -= 1
 
             if self.body.out_of_bounds():
                 self.remove()
 
-    def draw(self):
+    # foolishly, now i have to make a draw, die, and remove command for
+    # EVERY enemy type
+    def draw(self, surf):
         if self.dead:
-            self.body.debug_hitbox(postSurf, RED)
+            self.body.debug_hitbox(surf, RED)
         elif self.hasCoin:
-            self.body.debug_hitbox(postSurf, YELLOW)
+            self.body.debug_hitbox(surf, YELLOW)
         else:
-            self.body.debug_hitbox(postSurf, CYAN)
+            self.body.debug_hitbox(surf, CYAN)
 
     def draw_selected(self):
         self.body.debug_hitbox(postSurf, PALE_RED)
+
+    def draw_health(self):
+        x = self.body.pos_center()[0] - int(self.health.MAX_W / 2)
+        y = self.body.y - PIXEL * 3
+        self.health.draw(postSurf, camera.pos((x, y)))
 
     def die(self):
         self.dead = True
         self.body.stop_x()
         self.body.stop_y()
-        self.health.max = self.CORPSE_HEALTH
+        self.health.set_max(self.CORPSE_HEALTH)
         self.health.refill()
 
     def remove(self):
@@ -922,23 +971,24 @@ SOUND_JUMP = 0
 MUSIC_LOOP1 = 1
 MUSIC_LOOP2 = 2
 
-SHOP_SPLIT = 5
+SHOP_ENTER = 6 * TILE_H
+SHOP_ENTER_TILE = 5
 grid = Grid(15, 20)   # temporary level
-grid.change_rect(0, SHOP_SPLIT, 15, 1, PLAYER_WALL)   # outline
-grid.change_rect(0, SHOP_SPLIT, 1, 15, PLAYER_WALL)
-grid.change_rect(0, SHOP_SPLIT + 14, 15, 1, PLAYER_WALL)
-grid.change_rect(14, SHOP_SPLIT, 1, 15, PLAYER_WALL)
+grid.change_rect(0, SHOP_ENTER_TILE, 15, 1, PLAYER_WALL)   # outline
+grid.change_rect(0, SHOP_ENTER_TILE, 1, 15, PLAYER_WALL)
+grid.change_rect(0, SHOP_ENTER_TILE + 14, 15, 1, PLAYER_WALL)
+grid.change_rect(14, SHOP_ENTER_TILE, 1, 15, PLAYER_WALL)
 
-grid.change_point(3, SHOP_SPLIT + 3, ALL_WALL)   # pillars
-grid.change_point(3, SHOP_SPLIT + 11, ALL_WALL)
-grid.change_point(11, SHOP_SPLIT + 3, ALL_WALL)
-grid.change_point(11, SHOP_SPLIT + 11, ALL_WALL)
+grid.change_point(3, SHOP_ENTER_TILE + 3, ALL_WALL)   # pillars
+grid.change_point(3, SHOP_ENTER_TILE + 11, ALL_WALL)
+grid.change_point(11, SHOP_ENTER_TILE + 3, ALL_WALL)
+grid.change_point(11, SHOP_ENTER_TILE + 11, ALL_WALL)
 
 grid.change_rect(3, 0, 8, 1, ALL_WALL)   # shop walls
-grid.change_rect(3, 0, 1, SHOP_SPLIT, ALL_WALL)
-grid.change_rect(11, 0, 1, SHOP_SPLIT, ALL_WALL)
-grid.change_rect(3, SHOP_SPLIT, 9, 1, ALL_WALL)
-grid.change_rect(6, SHOP_SPLIT, 3, 1, ENEMY_WALL)   # shop entrance
+grid.change_rect(3, 0, 1, SHOP_ENTER_TILE, ALL_WALL)
+grid.change_rect(11, 0, 1, SHOP_ENTER_TILE, ALL_WALL)
+grid.change_rect(3, SHOP_ENTER_TILE, 9, 1, ALL_WALL)
+grid.change_rect(6, SHOP_ENTER_TILE, 3, 1, ENEMY_WALL)   # shop entrance
 
 grid.create_surf()
 
@@ -949,7 +999,10 @@ MOVE_LEFT = 1
 MOVE_RIGHT = 2
 
 enemies = [Shadowhound(500, 500),
-           Shadowhound(300, 500)]
+           Shadowhound(300, 500),
+           Shadowhound(100, 800),
+           Shadowhound(600, 800),
+           Shadowhound(600, 600)]
 enemy_bullets = []
 
 camera = Camera()
@@ -995,7 +1048,11 @@ while True:
     debug(9, "enemies", enemies)
 
     debug(10, "coins", player.coins)
-    debug(12, "right_click", right_mouse_released)
+    debug(12, "selected", player.select_corpse())
+
+    debug(14, "carrying", player.corpses)
+
+    debug(16, "in_shop?", player.inShop)
 
     if keys[pygame.K_f]:
         update(True)
