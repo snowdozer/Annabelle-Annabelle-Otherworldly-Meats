@@ -1,14 +1,15 @@
 import pygame
 import sys
 import os
+import math
 
 # CONSTANTS
 # BASIC VISUALS
 SCRN_W = 500
 SCRN_H = 500
-PIXEL = 5
-TILE_W = 2 * PIXEL
-TILE_H = 2 * PIXEL
+PIXEL = 10
+TILE_W = PIXEL*2
+TILE_H = PIXEL*2
 FPS = 60
 DEBUG_FPS = 5
 
@@ -103,17 +104,29 @@ def y_of(row, direction=UP):
         return row * TILE_H + TILE_H
 
 
+def angle_of(pos1, pos2):
+    delta_x = pos2[0] - pos1[0]
+    delta_y = pos2[1] - pos1[1]
+    return math.atan2(delta_y, delta_x)
+
+
+def angle_pos(center_pos, angle, distance):
+    delta_x = math.cos(angle) * distance
+    delta_y = math.sin(angle) * distance
+    return center_pos[0] + delta_x, center_pos[1] + delta_y
+
+
 class Sprite:
     """stores a spritesheet made of all of a thing's animations"""
     def __init__(self, sheet_path, frame_w, frame_h, frame_counts):
         image = pygame.image.load(os.path.join("images", sheet_path))
-        self.full_w = image.get_width() * PIXEL
-        self.full_h = image.get_height() * PIXEL
+        self.full_w = PIXEL*image.get_width()
+        self.full_h = PIXEL*image.get_height()
         self.surface = pygame.transform.scale(image, (self.full_w, self.full_h))
         self.surface.set_colorkey(GREEN)
 
-        self.frame_w = frame_w * PIXEL
-        self.frame_h = frame_h * PIXEL
+        self.frame_w = PIXEL*frame_w
+        self.frame_h = PIXEL*frame_h
         self.anim_count = int(self.full_w / frame_w)
         self.frame_counts = frame_counts
 
@@ -191,7 +204,7 @@ class Soundboard:
     def change_music(self, sound_id, fade_in=0):
         """fades one music track into another"""
         self.fade_music(fade_in)
-        self.play_music(sound_id)
+        self.play_music(sound_id, fade_in)
 
 
 class Camera:
@@ -225,9 +238,6 @@ class Camera:
         else:
             y = self.focus_body.y + int(self.focus_body.h / 2)
 
-        debug(12, "focus_x", x)
-        debug(13, "focus_y", y)
-
         self.step_to(x + x_off, y + y_off)
 
     def autolock(self, level):
@@ -242,6 +252,12 @@ class Camera:
         else:
             self.constrain_y = True
 
+    def pos(self, position):
+        """returns the x and y based on the camera"""
+        x = position[0] + -(self.body.x - int(SCRN_W / 2))
+        y = position[1] + -(self.body.y - int(SCRN_H / 2))
+        return int(x), int(y)
+
 
 class Grid:
     """the grid where all the tiles in the level are placed"""
@@ -251,6 +267,7 @@ class Grid:
         self.FULL_W = width * TILE_W
         self.FULL_H = height * TILE_H
         self.grid = [[EMPTY for _ in range(height)] for _ in range(width)]
+        self.surf = None
 
     def out_of_bounds(self, col, row):
         """returns whether or not a tile is outside of the grid"""
@@ -313,13 +330,19 @@ class Grid:
 
         return False
 
-    def draw(self):
+    def create_surf(self):
         """draws the entire stage"""
+        self.surf = pygame.Surface((self.FULL_W, self.FULL_H))
+        self.surf.set_colorkey(GREEN)
+        self.surf.fill(GREEN)
         for row in range(self.GRID_H):
             for col in range(self.GRID_W):
                 if self.tile_at(col, row) == WALL:
                     rect = (col * TILE_W, row * TILE_H, TILE_W, TILE_H)
-                    pygame.draw.rect(postSurf, WHITE, rect)
+                    pygame.draw.rect(self.surf, WHITE, rect)
+
+    def draw(self, surf):
+        surf.blit(self.surf, camera.pos((0, 0)))
 
 
 class Body:
@@ -389,6 +412,18 @@ class Body:
     def next_y(self):
         """returns the y position of the body on the next frame"""
         return self.y + self.yVel + self.yAcc
+
+    def pos_center(self):
+        """returns the center position of the body in the map"""
+        return self.x + int(self.w / 2), self.y + int(self.h / 2)
+
+    def screen_pos(self):
+        """returns the position on the screen in relation to the camera"""
+        return camera.pos((self.x, self.y))
+
+    def screen_pos_center(self):
+        """returns center position in relation to the camera"""
+        return camera.pos(self.pos_center())
 
     def stop_x(self):
         self.xDir = 0
@@ -482,98 +517,158 @@ class Body:
                 self.yVel = TERMINAL_VELOCITY
 
     def try_jump(self, power):
-        soundboard.stop(SOUND_JUMP)
-        soundboard.play(SOUND_JUMP)
         if self.grounded:
+            soundboard.play(SOUND_JUMP)
             self.grounded = False
             self.yVel = -power
 
 
+class Bullet:
+    def __init__(self, x_vel, y_vel, x, y, w, h, extend_x=0, extend_y=0):
+        self.body = Body(x, y, w, h, extend_x, extend_y)
+        self.body.xVel = x_vel
+        self.body.yVel = y_vel
+
+
 class Player:
+    BULLET_SIZE = PIXEL * 2
+
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = None
+        self.bullets = []
+        self.bullet_timer = 0
 
     def move(self):
-        self.body.try_fall()
         self.body.collide_stage()
         self.body.move()
 
-        debug(5, "xVel:", self.body.xVel)
-        debug(6, "yVel:", self.body.yVel)
+    def move_bullets(self):
+        for bullet in self.bullets:
+            bullet.body.move()
 
-    def draw(self):
-        postSurf.blit(self.sprite.get_now_frame(), (self.body.x, self.body.y))
+    def gun_pos(self):
+        angle = angle_of(self.body.screen_pos_center(), mouse_pos)
+        gun_pos = angle_pos(self.body.pos_center(), angle, PIXEL*5)
+        return int(gun_pos[0]), int(gun_pos[1])
+
+    def delta_gun_pos(self):
+        player_pos = self.body.screen_pos_center()
+        gun_pos = self.gun_pos()
+        return int(gun_pos[0] - player_pos[0]), int(gun_pos[1] - player_pos[1])
+
+    def shoot(self):
+        angle = angle_of(self.body.screen_pos_center(), mouse_pos)
+        vel = angle_pos((0, 0), angle, 10)
+        pos = angle_pos(self.gun_pos(), angle, 5)
+
+        self.bullets.append(Bullet(vel[0], vel[1], pos[0], pos[1],
+                                   self.BULLET_SIZE, self.BULLET_SIZE))
+
+    def try_shoot(self):
+        if self.bullet_timer == 0:
+            self.bullet_timer = 20
+            self.shoot()
+        else:
+            self.bullet_timer -= 1
+
+    def draw(self, surf):
+        """draws the player"""
+        position = camera.pos((self.body.x, self.body.y))
+        surf.blit(self.sprite.get_now_frame(), position)
+
+    def draw_gun(self, surf):
+        """draw, as in artistically"""
+        pygame.draw.circle(surf, CYAN, camera.pos(self.gun_pos()), 10)
+
+    def draw_bullets(self, surf):
+        """draws all of the player's bullets"""
+        for bullet in self.bullets:
+            pos = camera.pos((bullet.body.x, bullet.body.y))
+            pygame.draw.circle(surf, CYAN, pos, int(self.BULLET_SIZE / 2))
+
+    def update(self):
+        self.move()
+        self.draw(postSurf)
+        self.draw_gun(postSurf)
+        self.move_bullets()
+        self.draw_bullets(postSurf)
 
 
 soundboard = Soundboard()
 soundboard.add("test_jump.wav")
-soundboard.add("test_sound.wav")
-soundboard.add("test_music.wav")
-soundboard.add("test_loop.wav")
+soundboard.add("test_loop_1.wav")
+soundboard.add("test_loop_2.wav")
 SOUND_JUMP = 0
-SOUND_TEST = 1
-SOUND_TEST_MUSIC = 2
-SOUND_TEST_LOOP = 3
+MUSIC_LOOP1 = 1
+MUSIC_LOOP2 = 2
 
-grid = Grid(50, 51)   # temporary level
-grid.change_rect(10, 42, 10, 1, WALL)
-grid.change_rect(13, 45, 20, 1, WALL)
-grid.change_rect(18, 48, 30, 1, WALL)
-grid.change_rect(40, 40, 5, 10, WALL)
-levelSurf = pygame.Surface((grid.FULL_W, grid.FULL_H))
+grid = Grid(50, 25)   # temporary level
+grid.change_rect(5, 21, 10, 1, WALL)
+grid.change_rect(13, 10, 20, 1, WALL)
+grid.change_rect(18, 15, 30, 1, WALL)
+grid.change_rect(17, 15, 5, 10, WALL)
+grid.create_surf()
 
-player = Player(380, 400, 5 * PIXEL, 5 * PIXEL, -2, -2)
+player = Player(100, 100, PIXEL*5, PIXEL*5, -2, -2)
 player.sprite = Sprite("test_player.png", 5, 5, (1, 5, 5))
 IDLE = 0
 MOVE_LEFT = 1
 MOVE_RIGHT = 2
 
+enemy_bullets = []
+
 camera = Camera()
 camera.autolock(grid)
 camera.change_focus(player.body)
 
-soundboard.play_music(SOUND_TEST_LOOP, 5000)
-
 while True:
     keys = pygame.key.get_pressed()
+    mouse_pos = pygame.mouse.get_pos()
+    mouse_pressed = pygame.mouse.get_pressed()
 
     # debug keys
     if keys[pygame.K_r]:
         player.body.goto(SCRN_W / 2, 0)
 
+    if mouse_pressed[0]:
+        player.try_shoot()
+    else:
+        player.bullet_timer = 0
+
     # movement keys
     if keys[pygame.K_UP] or keys[pygame.K_w]:
-        player.body.try_jump(5)
+        player.body.yVel = -4
+    elif keys[pygame.K_DOWN] or keys[pygame.K_s]:
+        player.body.yVel = 4
+    else:
+        player.body.yVel = 0
 
     if keys[pygame.K_LEFT] or keys[pygame.K_a]:
         player.sprite.change_anim(MOVE_LEFT)
         player.sprite.delay_next(2)
 
-        player.body.xVel = -3
+        player.body.xVel = -4
 
     elif keys[pygame.K_RIGHT] or keys[pygame.K_d]:
         player.sprite.change_anim(MOVE_RIGHT)
         player.sprite.delay_next(2)
 
-        player.body.xVel = 3
+        player.body.xVel = 4
     else:
         player.sprite.change_anim(IDLE)
         player.body.xVel = 0
 
-    player.move()
-
-    grid.draw()
-    player.draw()
+    grid.draw(postSurf)
+    player.update()
 
     debug(0, "FPS: %.2f" % clock.get_fps())
-    debug(1, "xDir:", player.body.xDir)
-    debug(2, "yDir:", player.body.yDir)
-    debug(3, "grounded:", player.body.grounded)
 
     camera.focus()
-    debug(9, "camera.x:", camera.body.x)
-    debug(10, "camera.y:", camera.body.y)
+    debug(2, "camera.x:", camera.body.x)
+    debug(3, "camera.y:", camera.body.y)
+
+    debug(5, "gun_pos", player.gun_pos())
 
     if keys[pygame.K_f]:
         update(True)
