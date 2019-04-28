@@ -122,11 +122,6 @@ def y_of(row, direction=UP):
         return row * TILE_H + TILE_H
 
 
-def pixel_pos(pos):
-    """rounds position to nearest pixel"""
-    return int(pos[0] / PIXEL) * PIXEL, int(pos[1] / PIXEL) * PIXEL
-
-
 def angle_of(pos1, pos2):
     """returns the angle in radians between two points from standard position"""
     delta_x = pos2[0] - pos1[0]
@@ -150,14 +145,71 @@ def body_distance(body1, body2):
     return distance(body1.pos_center(), body2.pos_center())
 
 
+def load_image(path):
+    image = pygame.image.load(os.path.join("images", path))
+    width = image.get_width() * PIXEL
+    height = image.get_height() * PIXEL
+    resized = pygame.transform.scale(image, (width, height))
+    resized.convert()
+    return resized
+
+
+class Pinhole:
+    """inverted circle of black"""
+    LOW_PULSE = 55
+    HIGH_PULSE = 65
+    SWITCH_DIFF = 0.658
+
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+        self.w = int(SCRN_W / PIXEL)
+        self.h = int(SCRN_H / PIXEL)
+        self.radius = 100
+        self.surf = pygame.Surface((self.w, self.h))
+        self.surf.set_colorkey(GREEN)
+        self.contracting = False
+
+    def set_position(self, pos):
+        self.x = pos[0]
+        self.y = pos[1]
+
+    def set_radius(self, radius):
+        self.surf.fill(BLACK)
+        pygame.draw.circle(self.surf, GREEN, (self.x, self.y), int(radius))
+
+    def get_surface(self):
+        return pygame.transform.scale(self.surf, (SCRN_W, SCRN_H))
+
+    def update(self):
+        if player.inShop:
+            self.contracting = False
+            if self.radius < 100:
+                self.radius *= 1.05
+        else:
+            if self.contracting:
+                if self.radius > self.LOW_PULSE + self.SWITCH_DIFF:
+                    self.radius -= -(self.LOW_PULSE - self.radius) / 50
+                else:
+                    self.contracting = False
+            else:
+                if self.radius < self.HIGH_PULSE - self.SWITCH_DIFF:
+                    self.radius += (self.HIGH_PULSE - self.radius) / 50
+                else:
+                    self.contracting = True
+
+        self.set_radius(self.radius)
+        postSurf.blit(self.get_surface(), (0, 0))
+
+
 class Spritesheet:
     """stores a spritesheet made of all of a thing's animations"""
     def __init__(self, sheet_path, frame_w, frame_h, frame_counts):
-        image = pygame.image.load(os.path.join("images", sheet_path))
-        self.full_w = PIXEL*image.get_width()
-        self.full_h = PIXEL*image.get_height()
-        self.surface = pygame.transform.scale(image, (self.full_w, self.full_h))
+        self.surface = load_image(sheet_path)
         self.surface.set_colorkey(GREEN)
+
+        self.full_w = self.surface.get_width()
+        self.full_h = self.surface.get_height()
 
         self.frame_w = PIXEL*frame_w
         self.frame_h = PIXEL*frame_h
@@ -165,8 +217,8 @@ class Spritesheet:
         self.frame_counts = frame_counts
         self.z_height = 0
 
-    def init_z_height(self, body):
-        self.z_height = self.frame_h - body.h
+    def init_z_height(self, rect):
+        self.z_height = self.frame_h - rect.h
 
     def get_frame(self, anim_id, frame):
         """returns a subsurface containing a frame of an animation"""
@@ -297,9 +349,9 @@ class Camera:
 
     def step_to(self, x, y):
         """moves one step towards a specific point"""
-        distance_x = int((x - self.body.x) / 10)
-        distance_y = int((y - self.body.y) / 10)
-        debug(5, "camera step distance", distance_x, distance_y)
+        distance_x = (x - self.body.x) / 10
+        distance_y = (y - self.body.y) / 10
+        debug(5, "camera step distance %.2f %.2f" % (distance_x, distance_y))
         self.body.goto(self.body.x + distance_x, self.body.y + distance_y)
 
     def focus(self, x_off=0, y_off=0):
@@ -432,18 +484,7 @@ class Grid:
     def create_surf(self):
         """draws the entire stage"""
         self.surf = pygame.Surface((self.FULL_W, self.FULL_H))
-        self.surf.set_colorkey(GREEN)
-        self.surf.fill(GREEN)
-        for row in range(self.GRID_H):
-            for col in range(self.GRID_W):
-                rect = (col * TILE_W, row * TILE_H, TILE_W, TILE_H)
-                tile = self.tile_at(col, row)
-                if tile == ALL_WALL:
-                    pygame.draw.rect(self.surf, WHITE, rect)
-                elif tile == PLAYER_WALL:
-                    pygame.draw.rect(self.surf, CYAN, rect)
-                elif tile == ENEMY_WALL:
-                    pygame.draw.rect(self.surf, RED, rect)
+        self.surf.blit(level_background, (0, 0))
 
     def draw(self, surf):
         surf.blit(self.surf, camera.pos((0, 0)))
@@ -460,12 +501,13 @@ def collide(rect1, rect2):
 
 class Score:
     """a visual counter"""
+    INCREMENT_TIME = 12
+
     def __init__(self, start_count, pos):
         self.color = WHITE
         self.count = start_count
         self.display_count = start_count
 
-        self.cycle = 15
         self.timer = 0
 
         self.x = pos[0]
@@ -480,7 +522,7 @@ class Score:
             if self.timer:
                 self.timer -= 1
             else:
-                self.timer = self.cycle
+                self.timer = self.INCREMENT_TIME
                 self.display_count += 1
                 self.color = SCORE_GREEN
 
@@ -488,7 +530,7 @@ class Score:
             if self.timer:
                 self.timer -= 1
             else:
-                self.timer = self.cycle
+                self.timer = self.INCREMENT_TIME
                 self.display_count -= 1
                 self.color = SCORE_RED
 
@@ -506,7 +548,7 @@ class Body:
     """the skeleton of anything that moves and lives
 
     COLLISION_STEPS is the amount of substeps to check each step"""
-    COLLISION_STEPS = 2
+    COLLISION_STEPS = 4
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.x = x
@@ -567,6 +609,10 @@ class Body:
             self.goto(self.x, self.y)
 
     def out_of_bounds(self):
+        if player.inShop:
+            if self.y > SHOP_ENTER + SCRN_H:
+                return True
+
         if -50 <= self.x < grid.FULL_W + 50 and -50 <= self.y < grid.FULL_H + 50:
             return False
 
@@ -696,6 +742,9 @@ class Bullet:
         self.body.xVel = x_vel
         self.body.yVel = y_vel
 
+        self.sprite = SpriteInstance(PLAYER_BULLET_SPRITE_SHEET)
+        self.sprite.current_frame = random.randint(0, 3)
+
     def in_wall(self):
         col = col_at(self.body.next_x())
         row = row_at(self.body.next_y())
@@ -706,7 +755,7 @@ class Bullet:
 
 
 class Player:
-    BULLET_SIZE = PIXEL*5
+    BULLET_SIZE = PIXEL*4
     BULLET_SPEED = 8
     BULLET_DELAY = 15
     INITIAL_COINS = 8
@@ -714,6 +763,7 @@ class Player:
     PICKUP_DISTANCE = PIXEL*20
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
+        """corpse_speeds determines your speed carrying that many corpses"""
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = SpriteInstance(PLAYER_SPRITE_SHEET)
         self.bullets = []
@@ -721,6 +771,7 @@ class Player:
 
         self.corpse_count = 0
         self.corpses = []
+        self.corpse_speeds = (6, 4, 3.2, 2.5, 2, 1.7)
 
         self.coins = self.INITIAL_COINS
         self.inShop = True
@@ -739,25 +790,31 @@ class Player:
                 self.enteredShop = True
                 self.change_coins(-1)
                 coin_handler.add(-1)
+
         else:
             if self.body.pos_center()[1] < SHOP_ENTER:
                 self.inShop = True
                 self.enteredShop = True
                 self.change_coins(-1)
                 coin_handler.add(-1)
+                for coin in reversed(range(coin_handler.ground_coin_count)):
+                    coin_handler.delete_coin(coin)
+                for enemy in reversed(enemyHandler.enemies):
+                    if enemy.dead:
+                        enemy.remove()
 
     # movement speed is proportionate to the amount of corpses you carry
     def move_up(self):
-        self.body.yVel = -6 + self.corpse_count
+        self.body.yVel = -self.corpse_speeds[self.corpse_count]
 
     def move_down(self):
-        self.body.yVel = 6 - self.corpse_count
+        self.body.yVel = self.corpse_speeds[self.corpse_count]
 
     def move_left(self):
-        self.body.xVel = -6 + self.corpse_count
+        self.body.xVel = -self.corpse_speeds[self.corpse_count]
 
     def move_right(self):
-        self.body.xVel = 6 - self.corpse_count
+        self.body.xVel = self.corpse_speeds[self.corpse_count]
 
     def handle_movement(self):
         if keys[pygame.K_UP] or keys[pygame.K_w]:
@@ -793,7 +850,7 @@ class Player:
 
     def gun_pos(self):
         angle = angle_of(self.body.screen_pos_center(), mouse_pos)
-        gun_pos = angle_pos(self.body.pos_center(), angle, PIXEL*12)
+        gun_pos = angle_pos(self.body.pos_center(), angle, PIXEL*7)
         return int(gun_pos[0]), int(gun_pos[1])
 
     def delta_gun_pos(self):
@@ -804,10 +861,15 @@ class Player:
     def shoot(self):
         angle = angle_of(self.body.screen_pos_center(), mouse_pos)
         vel = angle_pos((0, 0), angle, 8)
-        pos = angle_pos(self.gun_pos(), angle, 5)
+        gun_pos = self.gun_pos()
+        x = gun_pos[0] - PLAYER_BULLET_SPRITE_SHEET.frame_w / 2
+        y = gun_pos[1] - PLAYER_BULLET_SPRITE_SHEET.frame_h / 2
+        pos = angle_pos((x, y), angle, 5)
 
         self.bullets.append(Bullet(vel[0], vel[1], pos[0], pos[1],
                                    self.BULLET_SIZE, self.BULLET_SIZE))
+
+        soundboard.play(SOUND_SHOOT)
 
     def try_shoot(self):
         if self.bullet_timer == 0 and not self.inShop:
@@ -838,23 +900,35 @@ class Player:
 
         x = self.body.x
         y = self.body.y - self.sprite.sheet.z_height
-        position = pixel_pos((x, y))
 
-        surf.blit(self.sprite.get_now_frame(), camera.pos(position))
+        surf.blit(self.sprite.get_now_frame(), camera.pos((x, y)))
 
     def draw_gun(self, surf):
         """draw, as in artistically"""
-        position = camera.pos(pixel_pos(self.gun_pos()))
-        pygame.draw.circle(surf, CYAN, position, 10)
+        if mouse_pos[0] < camera.pos(player.body.pos_center())[0]:
+            fairy_sprite.change_anim(0)
+        else:
+            fairy_sprite.change_anim(1)
+        fairy_sprite.delay_next(6)
+
+        position = camera.pos(self.gun_pos())
+        x = position[0] - fairy_sprite.sheet.frame_w / 2
+        y = position[1] - fairy_sprite.sheet.frame_h / 2 - PIXEL
+        surf.blit(fairy_sprite.get_now_frame(), (x, y))
 
     def draw_bullets(self, surf):
         """draws all of the player's bullets"""
         for bullet in self.bullets:
+            bullet.sprite.delay_next(2)
             pos = camera.pos((bullet.body.x, bullet.body.y))
-            pygame.draw.circle(surf, CYAN, pos, int(self.BULLET_SIZE / 2))
+            surf.blit(bullet.sprite.get_now_frame(), pos)
 
     def draw_corpses(self, surf):
         y = self.body.y - self.sprite.sheet.z_height + PIXEL
+
+        if self.sprite.current_anim != IDLE and self.sprite.current_frame == 2:
+            y -= PIXEL   # account for sprite bobbing during movement
+
         for i, corpse in enumerate(self.corpses):
             x = self.body.x + (self.body.w / 2 - corpse.body.w / 2)
             y -= corpse.body.h - PIXEL
@@ -892,7 +966,7 @@ class Player:
         i = coin_handler.ground_coin_count
         for coin in reversed(coin_handler.coins):
             i -= 1
-            if collide(coin.gridbox, player.body.gridbox):
+            if collide(coin.body.gridbox, player.body.gridbox):
                 coin_handler.delete_coin(i)
                 self.change_coins(1)
 
@@ -903,12 +977,15 @@ class Player:
             enemy.remove()
 
     def sell_corpses(self):
-        for _ in range(len(self.corpses)):
-            coin_handler.spawn_coin_drop(SHOP_CENTER)
-            coin_handler.add(1)
+        if self.corpse_count != 0:
+            for _ in range(self.corpse_count):
+                coin_handler.spawn_coin_drop(SHOP_CENTER)
+                coin_handler.add(1)
 
-        self.corpse_count = 0
-        self.corpses = []
+            self.corpse_count = 0
+            self.corpses = []
+
+            soundboard.play(SOUND_SELL)
 
     def change_coins(self, amount):
         self.coins += amount
@@ -933,20 +1010,46 @@ class Player:
         self.sprite.delay_next(4)
 
         self.handle_movement()
-        self.draw(postSurf)
-        if not self.inShop:
-            self.draw_gun(postSurf)
         self.move_bullets()
         self.draw_bullets(postSurf)
+        if not self.inShop:
+            self.draw_gun(postSurf)
+
+        self.draw(postSurf)
         self.draw_corpses(postSurf)
         self.collect_coins()
+
+
+class Coin:
+    SPEED = 6
+    SLOWDOWN = 1.6
+
+    def __init__(self, pos, thrown=False):
+        self.body = Body(pos[0], pos[1], PIXEL*7, PIXEL*7)
+        self.sprite = SpriteInstance(COIN_SPRITE_SHEET)
+        if thrown:
+            angle = random.vonmisesvariate(0, 0) - math.pi
+            vel = angle_pos((0, 0), angle, self.SPEED)
+            self.body.xVel = vel[0]
+            self.body.yVel = vel[1]
+
+    def draw(self):
+        pos = camera.pos((self.body.x, self.body.y))
+        postSurf.blit(self.sprite.get_now_frame(), pos)
+
+    def update(self):
+        self.body.xVel /= self.SLOWDOWN
+        self.body.yVel /= self.SLOWDOWN
+        self.body.collide_stage()
+        self.body.move()
+
+        self.draw()
+        self.sprite.delay_next(6)
 
 
 class CoinHandler:
     """stores all the coins on the map"""
     INITIAL_COINS = 8
-    COIN_SPEED = 5
-    COIN_SLOWDOWN = 1.6
 
     def __init__(self):
         self.coins = []
@@ -955,24 +1058,15 @@ class CoinHandler:
 
     def update_coins(self):
         for coin in self.coins:
-            coin.xVel /= self.COIN_SLOWDOWN
-            coin.yVel /= self.COIN_SLOWDOWN
-            coin.collide_stage()
-            coin.move()
-
-            coin.debug_hitbox(postSurf, YELLOW)
+            coin.update()
 
     def spawn_coin(self, pos):
         self.ground_coin_count += 1
-        self.coins.append(Body(pos[0], pos[1], PIXEL*3, PIXEL*5))
+        self.coins.append(Coin(pos))
 
     def spawn_coin_drop(self, pos):
-        self.spawn_coin(pos)
-        body = self.coins[self.ground_coin_count - 1]
-        angle = random.vonmisesvariate(0, 0) - math.pi
-        vel = angle_pos((0, 0), angle, self.COIN_SPEED)
-        body.xVel = vel[0]
-        body.yVel = vel[1]
+        self.ground_coin_count += 1
+        self.coins.append(Coin(pos, True))
 
     def add(self, amount):
         self.coin_count += amount
@@ -980,6 +1074,13 @@ class CoinHandler:
     def delete_coin(self, i):
         del self.coins[i]
         self.ground_coin_count -= 1
+
+    def out_of_bounds_fix(self):
+        i = self.ground_coin_count
+        for coin in reversed(self.coins):
+            i -= 1
+            if grid.tile_at(coin.x, coin.y) == VOID:
+                self.delete_coin(i)
 
 
 class Health:
@@ -1058,7 +1159,7 @@ class EnemyHandler:
             rng = random.random()
             if rng < 0.66:
                 x = random.choice((-50, grid.FULL_W + 50))
-                y = random.randint(-50, grid.FULL_H + 50)
+                y = random.randint(SHOP_ENTER, grid.FULL_H + 50)
             else:
                 x = random.randint(-50, grid.FULL_W + 50)
                 y = grid.FULL_H + 50
@@ -1088,7 +1189,14 @@ class Shadowhound:
 
         self.hasCoin = False
         self.movingTowards = True
-        self.awayAngle = random.vonmisesvariate(3/2 * math.pi, 1) - math.pi
+
+        away_angle = -1.5
+        while math.pi * -(3/4) < away_angle < math.pi * -(1/4):
+            away_angle = math.radians(random.randint(-180, 180))
+
+        vel = angle_pos((0, 0), away_angle, self.RUN_SPEED)
+        self.away_x_vel = vel[0]
+        self.away_y_vel = vel[1]
 
     def change_vel(self, angle, speed):
         """change your velocity based on an angle"""
@@ -1107,7 +1215,6 @@ class Shadowhound:
                 self.timer = self.DASH_TIME + self.WAIT_TIME
                 if self.hasCoin or player.inShop or player.coins <= 0:
                     self.movingTowards = False
-                    self.change_vel(self.awayAngle, self.RUN_SPEED)
 
                 else:
                     player_pos = player.body.pos_center()
@@ -1126,6 +1233,8 @@ class Shadowhound:
                     player.change_coins(-1)
 
         else:
+            self.body.xVel = self.away_x_vel
+            self.body.yVel = self.away_y_vel
             self.body.collide_stage(ENEMY)
             self.body.move()
 
@@ -1163,6 +1272,7 @@ class Shadowhound:
 
         if self.hasCoin:
             coin_handler.spawn_coin_drop(self.body.pos_center())
+            self.hasCoin = False
 
     def remove(self):
         enemyHandler.enemies.remove(self)
@@ -1204,17 +1314,26 @@ class UnderworldKing:
 
 
 soundboard = Soundboard()
-soundboard.add("shop_demo.wav")
-soundboard.add("underworld_demo.wav")
+soundboard.add("shop.wav")
+soundboard.add("underworld.wav")
+soundboard.add("sell.wav")
+soundboard.add("shoot.wav")
+soundboard.add("hitwall.wav")
 MUSIC_SHOP = 0
 MUSIC_UNDERWORLD = 1
+SOUND_SELL = 2
+SOUND_SHOOT = 3
+SOUND_HITWALL = 4
 soundboard.play(MUSIC_SHOP, -1)
 soundboard.play(MUSIC_UNDERWORLD, -1)
 soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
 
 SHOP_ENTER = 6 * TILE_H
 SHOP_ENTER_TILE = 5
-grid = Grid(15, 20)   # temporary level
+
+level_background = load_image("level_template.png")
+
+grid = Grid(15, 20)
 grid.change_rect(0, SHOP_ENTER_TILE, 15, 1, PLAYER_WALL)   # outline
 grid.change_rect(0, SHOP_ENTER_TILE, 1, 15, PLAYER_WALL)
 grid.change_rect(0, SHOP_ENTER_TILE + 14, 15, 1, PLAYER_WALL)
@@ -1241,7 +1360,12 @@ enemyHandler = EnemyHandler()
 
 PLAYER_SPRITE_SHEET = Spritesheet("player.png", 6, 9, (4, 4, 4, 4, 4))
 player = Player(500, 200, PIXEL*6, PIXEL*4, 0, 0)
-PLAYER_SPRITE_SHEET.init_z_height(player.body)
+PLAYER_SPRITE_SHEET.init_z_height(player.body.gridbox)
+
+FAIRY_SPRITE_SHEET = Spritesheet("fairy.png", 5, 6, (4, 4))
+fairy_sprite = SpriteInstance(FAIRY_SPRITE_SHEET)
+
+PLAYER_BULLET_SPRITE_SHEET = Spritesheet("player_bullet.png", 4, 4, (4,))
 
 IDLE = 0
 
@@ -1249,11 +1373,16 @@ camera = Camera()
 camera.autolock(grid)
 camera.change_focus(player.body)
 
+pinhole = Pinhole()
+pinhole.set_position((int(125 / 2), int(125 / 2)))
+
 right_mouse_last = False
 right_mouse_released = False
 
+COIN_SPRITE_SHEET = Spritesheet("coin.png", 7, 7, (5,))
 coin_handler = CoinHandler()
-coin_counter = Score(player.coins, (30, 20))
+coin_counter = Score(player.coins, (65, 7))
+coin_counter_sprite = SpriteInstance(COIN_SPRITE_SHEET)
 
 ending = 0
 SHOP_END = 1
@@ -1279,8 +1408,13 @@ while True:
     soundboard.update()
     camera.handle()
 
-    coin_counter.update()
     coin_handler.update_coins()
+
+    pinhole.update()
+
+    coin_counter.update()
+    # coin_counter_sprite.delay_next(6)
+    postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
 
     # check for lose conditions
     if not ending:
@@ -1300,7 +1434,7 @@ while True:
 
     debug(0, "FPS: %.2f" % clock.get_fps())
     debug(2, "gun_pos", player.gun_pos())
-    debug(4, "camera", camera.body.x, camera.body.y)
+    debug(4, "camera %.2f %.2f" % (camera.body.x, camera.body.y))
     debug(6, "enemies", enemyHandler.enemies)
     debug(7, "coins", coin_handler.coin_count)
     debug(11, "carrying", player.corpses)
@@ -1312,6 +1446,10 @@ while True:
     debug(18, "ending", ending)
 
     debug(19, "yvel", player.body.y, player.body.yVel)
+
+    debug(21, "anim frame", player.sprite.current_frame)
+
+    debug(23, "pinhole radius", pinhole.radius)
     if keys[pygame.K_f]:
         update(True)   # slows down fps
     else:
