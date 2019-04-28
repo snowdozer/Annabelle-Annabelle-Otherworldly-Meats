@@ -122,6 +122,11 @@ def y_of(row, direction=UP):
         return row * TILE_H + TILE_H
 
 
+def pixel_pos(pos):
+    """rounds position to nearest pixel"""
+    return int(pos[0] / PIXEL) * PIXEL, int(pos[1] / PIXEL) * PIXEL
+
+
 def angle_of(pos1, pos2):
     """returns the angle in radians between two points from standard position"""
     delta_x = pos2[0] - pos1[0]
@@ -145,7 +150,7 @@ def body_distance(body1, body2):
     return distance(body1.pos_center(), body2.pos_center())
 
 
-class Sprite:
+class Spritesheet:
     """stores a spritesheet made of all of a thing's animations"""
     def __init__(self, sheet_path, frame_w, frame_h, frame_counts):
         image = pygame.image.load(os.path.join("images", sheet_path))
@@ -160,36 +165,50 @@ class Sprite:
         self.frame_counts = frame_counts
         self.z_height = 0
 
-        self.current_frame = 0
-        self.current_anim = 0
-
-        self.delay = 0
-
     def init_z_height(self, body):
         self.z_height = self.frame_h - body.h
 
     def get_frame(self, anim_id, frame):
         """returns a subsurface containing a frame of an animation"""
+        if anim_id >= self.anim_count:
+            print("get_frame() tried to return a non-existant animation!")
+        elif frame >= self.frame_counts[anim_id]:
+            print("get_frame() tried to return a non-existant frame!")
+
         x = self.frame_w * anim_id
         y = self.frame_h * frame
         return self.surface.subsurface((x, y, self.frame_w, self.frame_h))
 
+
+class SpriteInstance:
+    """handles all frame and animation stuff for each entity"""
+    def __init__(self, sheet):
+        self.current_frame = 0
+        self.current_anim = 0
+
+        self.delay = 0
+
+        self.sheet = sheet
+
+    def set_frame(self, frame):
+        self.current_frame = frame
+
     def get_now_frame(self):
         """returns a subsurface containing the current frame"""
-        return self.get_frame(self.current_anim, self.current_frame)
+        return self.sheet.get_frame(self.current_anim, self.current_frame)
 
     def next_frame(self):
         self.current_frame += 1
-        if self.current_frame >= self.frame_counts[self.current_anim]:
+        if self.current_frame >= self.sheet.frame_counts[self.current_anim]:
             self.current_frame = 0
 
     def prev_frame(self):
         self.current_frame -= 1
         if self.current_frame <= -1:
-            self.current_frame = self.frame_counts[self.current_anim] - 1
+            self.current_frame = self.sheet.frame_counts[self.current_anim] - 1
 
     def change_anim(self, anim_id):
-        if anim_id >= self.anim_count:
+        if anim_id >= self.sheet.anim_count:
             print("change_anim() tried to change to a nonexistant animation.")
 
         elif anim_id != self.current_anim:
@@ -513,8 +532,6 @@ class Body:
 
     def goto(self, x, y):
         """instantly moves the body to a specific position"""
-        x = int(x)
-        y = int(y)
         self.x = x
         self.y = y
         self.gridbox.x = x
@@ -698,7 +715,7 @@ class Player:
 
     def __init__(self, x, y, w, h, extend_x=0, extend_y=0):
         self.body = Body(x, y, w, h, extend_x, extend_y)
-        self.sprite = None
+        self.sprite = SpriteInstance(PLAYER_SPRITE_SHEET)
         self.bullets = []
         self.bullet_timer = 0
 
@@ -709,10 +726,6 @@ class Player:
         self.inShop = True
         self.enteredShop = False
         self.exitShop = False
-
-    def init_sprite(self):
-        self.sprite = Sprite("player.png", 8, 13, (1, 1, 8, 8))
-        self.sprite.init_z_height(self.body)
 
     def update_room(self):
         if self.enteredShop:
@@ -805,25 +818,34 @@ class Player:
 
     def draw(self, surf):
         """draws the player"""
-        if mouse_pos[0] < camera.pos(player.body.pos_center())[0]:
-            position = (self.body.x, self.body.y - self.sprite.z_height)
-            if self.body.moving:
-                self.sprite.change_anim(MOVE_LEFT)
-            else:
-                self.sprite.change_anim(IDLE_LEFT)
-
+        angle = angle_of(camera.pos(player.body.pos_center()), mouse_pos)
+        debug(20, angle)
+        if math.pi * -(3/4) < angle < math.pi * -(1/4):
+            direction = UP
+        elif math.pi * -(1/4) < angle < math.pi * (1/4):
+            direction = RIGHT
+        elif math.pi * (1/4) < angle < math.pi * (3/4):
+            direction = DOWN
         else:
-            position = (self.body.x, self.body.y - self.sprite.z_height)
-            if self.body.moving:
-                self.sprite.change_anim(MOVE_RIGHT)
-            else:
-                self.sprite.change_anim(IDLE_RIGHT)
+            direction = LEFT
+
+        if self.body.moving:
+            # moving animations are in order of direction constants
+            self.sprite.change_anim(direction)
+        else:
+            self.sprite.change_anim(IDLE)
+            self.sprite.set_frame(direction - 1)
+
+        x = self.body.x
+        y = self.body.y - self.sprite.sheet.z_height
+        position = pixel_pos((x, y))
 
         surf.blit(self.sprite.get_now_frame(), camera.pos(position))
 
     def draw_gun(self, surf):
         """draw, as in artistically"""
-        pygame.draw.circle(surf, CYAN, camera.pos(self.gun_pos()), 10)
+        position = camera.pos(pixel_pos(self.gun_pos()))
+        pygame.draw.circle(surf, CYAN, position, 10)
 
     def draw_bullets(self, surf):
         """draws all of the player's bullets"""
@@ -832,7 +854,7 @@ class Player:
             pygame.draw.circle(surf, CYAN, pos, int(self.BULLET_SIZE / 2))
 
     def draw_corpses(self, surf):
-        y = self.body.y - self.sprite.z_height + PIXEL
+        y = self.body.y - self.sprite.sheet.z_height + PIXEL
         for i, corpse in enumerate(self.corpses):
             x = self.body.x + (self.body.w / 2 - corpse.body.w / 2)
             y -= corpse.body.h - PIXEL
@@ -951,7 +973,6 @@ class CoinHandler:
         vel = angle_pos((0, 0), angle, self.COIN_SPEED)
         body.xVel = vel[0]
         body.yVel = vel[1]
-        print(body.xVel, body.yVel)
 
     def add(self, amount):
         self.coin_count += amount
@@ -1112,6 +1133,7 @@ class Shadowhound:
                 if self.hasCoin:
                     coin_handler.add(-1)
                 self.remove()
+                enemyHandler.enemy_count -= 1
 
     # foolishly, now i have to make a draw, die, and remove command for
     # EVERY enemy type
@@ -1217,12 +1239,11 @@ SHOP_RIGHT_WALL = TILE_W * 12
 
 enemyHandler = EnemyHandler()
 
-player = Player(500, 200, PIXEL*8, PIXEL*6, 0, 0)
-player.init_sprite()
-IDLE_LEFT = 0
-IDLE_RIGHT = 1
-MOVE_LEFT = 2
-MOVE_RIGHT = 3
+PLAYER_SPRITE_SHEET = Spritesheet("player.png", 6, 9, (4, 4, 4, 4, 4))
+player = Player(500, 200, PIXEL*6, PIXEL*4, 0, 0)
+PLAYER_SPRITE_SHEET.init_z_height(player.body)
+
+IDLE = 0
 
 camera = Camera()
 camera.autolock(grid)
