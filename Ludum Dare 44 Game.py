@@ -58,6 +58,7 @@ postSurf = pygame.display.set_mode((SCRN_W, SCRN_H))
 clock = pygame.time.Clock()
 DEBUG_FONT = pygame.font.SysFont("Tahoma", 10)
 FONT = pygame.font.Font("m5x7.ttf", 64)
+FONT_SMALL = pygame.font.Font("m5x7.ttf", 32)
 
 
 def update(slow_down=False):
@@ -534,6 +535,61 @@ class Score:
             self.color = WHITE
 
         self.draw(postSurf)
+
+
+class Text:
+    DELETE_FRAME = 120
+    SCROLL_FRAME = 2
+
+    def __init__(self, text, pos):
+        self.x = pos[0]
+        self.y = pos[1]
+        self.string = text
+        self.width = FONT.render(text, False, WHITE).get_width()
+        self.letters = len(text)
+        self.completion = self.letters
+        self.scroll_delay = 0
+        self.delete_delay = 0
+
+    def render(self):
+        return FONT_SMALL.render(self.string[: self.completion], False, WHITE)
+
+    def scroll(self):
+        if self.scroll_delay < self.SCROLL_FRAME:
+            self.scroll_delay += 1
+        else:
+            self.scroll_delay = 0
+            if self.completion < self.letters:
+                self.completion += 1
+            else:
+                print("tried to scroll text too far")
+
+
+class TextHandler:
+    def __init__(self):
+        self.texts = []
+        self.text_count = 0
+
+    def add(self, text, pos):
+        self.texts.append(Text(text, pos))
+        self.texts[self.text_count].completion = 0
+        self.text_count += 1
+
+    def delete(self, i):
+        del self.texts[i]
+
+    def update(self):
+        i = self.text_count
+        for text in reversed(self.texts):
+            i -= 1
+            postSurf.blit(text.render(), (text.x, text.y))
+            if text.completion < text.letters:
+                text.scroll()
+            else:
+                if text.delete_delay < text.DELETE_FRAME:
+                    text.delete_delay += 1
+                else:
+                    self.delete(i)
 
 
 class Body:
@@ -1492,6 +1548,9 @@ coin_handler = CoinHandler()
 coin_counter = Score(player.coins, (65, 7))
 coin_counter_sprite = SpriteInstance(COIN_SPRITE_SHEET)
 
+text_handler = TextHandler()
+text_handler.add("This is just a test.", (30, 30))
+
 ending = 0
 SHOP_END = 1
 DEATH_END = 2
@@ -1518,12 +1577,6 @@ while True:
 
     coin_handler.update_coins()
 
-    pinhole.update()
-
-    coin_counter.update()
-    # coin_counter_sprite.delay_next(6)
-    postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
-
     # check for lose conditions
     if not ending:
         if coin_handler.coin_count == 0:
@@ -1539,6 +1592,14 @@ while True:
         underworld_king.update()
         if underworld_king.collide_player():
             break
+
+    pinhole.update()
+
+    coin_counter.update()
+    # coin_counter_sprite.delay_next(6)
+    postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
+
+    text_handler.update()
 
     debug(0, "FPS: %.2f" % clock.get_fps())
     debug(2, "gun_pos", player.gun_pos())
