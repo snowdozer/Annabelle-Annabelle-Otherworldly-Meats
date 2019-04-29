@@ -541,28 +541,45 @@ class Text:
     DELETE_FRAME = 120
     SCROLL_FRAME = 2
 
-    def __init__(self, text, pos):
+    def __init__(self, text, pos, scrolling=False, ui=False):
         self.x = pos[0]
         self.y = pos[1]
         self.string = text
         self.width = FONT.render(text, False, WHITE).get_width()
         self.letters = len(text)
-        self.completion = self.letters
+
         self.scroll_delay = 0
         self.delete_delay = 0
 
+        self.scrolling = scrolling
+        if scrolling:
+            self.completion = 0
+        else:
+            self.completion = self.letters
+
+        self.ui = ui
+
     def render(self):
-        return FONT_SMALL.render(self.string[: self.completion], False, WHITE)
+        if self.ui:
+            position = (self.x, self.y)
+        else:
+            position = camera.pos((self.x, self.y))
+
+        text = FONT_SMALL.render(self.string[: self.completion], False, WHITE)
+        postSurf.blit(text, position)
 
     def scroll(self):
-        if self.scroll_delay < self.SCROLL_FRAME:
-            self.scroll_delay += 1
-        else:
-            self.scroll_delay = 0
-            if self.completion < self.letters:
-                self.completion += 1
+        if self.scrolling:
+            if self.scroll_delay < self.SCROLL_FRAME:
+                self.scroll_delay += 1
             else:
-                print("tried to scroll text too far")
+                self.scroll_delay = 0
+                if self.completion < self.letters:
+                    self.completion += 1
+                else:
+                    print("tried to scroll text too far")
+        else:
+            print("this text is unscrollable")
 
 
 class TextHandler:
@@ -570,9 +587,8 @@ class TextHandler:
         self.texts = []
         self.text_count = 0
 
-    def add(self, text, pos):
-        self.texts.append(Text(text, pos))
-        self.texts[self.text_count].completion = 0
+    def add(self, text, pos, scrolling=False, ui=False):
+        self.texts.append(Text(text, pos, scrolling, ui))
         self.text_count += 1
 
     def delete(self, i):
@@ -582,14 +598,16 @@ class TextHandler:
         i = self.text_count
         for text in reversed(self.texts):
             i -= 1
-            postSurf.blit(text.render(), (text.x, text.y))
-            if text.completion < text.letters:
-                text.scroll()
-            else:
-                if text.delete_delay < text.DELETE_FRAME:
-                    text.delete_delay += 1
+            text.render()
+
+            if text.scrolling:
+                if text.completion < text.letters:
+                    text.scroll()
                 else:
-                    self.delete(i)
+                    if text.delete_delay < text.DELETE_FRAME:
+                        text.delete_delay += 1
+                    else:
+                        self.delete(i)
 
 
 class Body:
@@ -1549,7 +1567,8 @@ coin_counter = Score(player.coins, (65, 7))
 coin_counter_sprite = SpriteInstance(COIN_SPRITE_SHEET)
 
 text_handler = TextHandler()
-text_handler.add("This is just a test.", (30, 30))
+text_handler.add("This is a test.", (50, 50), False, True)
+text_handler.add("This is also a text.", (50, 100), True)
 
 ending = 0
 SHOP_END = 1
