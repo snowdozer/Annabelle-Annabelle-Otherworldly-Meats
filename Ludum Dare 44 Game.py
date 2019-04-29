@@ -266,6 +266,7 @@ class SpriteInstance:
         elif anim_id != self.current_anim:
             self.current_anim = anim_id
             self.current_frame = 0
+            self.delay = 0
 
     def delay_next(self, delay):
         """delays flipping to the next animation frame for some frames
@@ -483,11 +484,12 @@ class Grid:
 
     def create_surf(self):
         """draws the entire stage"""
-        self.surf = pygame.Surface((self.FULL_W, self.FULL_H))
+        dimensions = (self.FULL_W + TILE_W * 2, self.FULL_H + TILE_H*2)
+        self.surf = pygame.Surface(dimensions)
         self.surf.blit(level_background, (0, 0))
 
     def draw(self, surf):
-        surf.blit(self.surf, camera.pos((0, 0)))
+        surf.blit(self.surf, camera.pos((-TILE_W, -TILE_H)))
 
 
 def collide(rect1, rect2):
@@ -501,12 +503,11 @@ def collide(rect1, rect2):
 
 class Score:
     """a visual counter"""
-    INCREMENT_TIME = 12
+    COLOR_CHANGE_TIME = 20
 
     def __init__(self, start_count, pos):
         self.color = WHITE
         self.count = start_count
-        self.display_count = start_count
 
         self.timer = 0
 
@@ -514,32 +515,23 @@ class Score:
         self.y = pos[1]
 
     def draw(self, surf):
-        text = FONT.render(str(self.display_count), False, self.color)
+        text = FONT.render(str(self.count), False, self.color)
         surf.blit(text, (self.x, self.y))
 
+    def change(self, amount):
+        self.timer = self.COLOR_CHANGE_TIME
+        if amount > 0:
+            self.color = SCORE_GREEN
+        elif amount < 0:
+            self.color = SCORE_RED
+
+        self.count += amount
+
     def update(self):
-        if self.display_count < self.count:
-            if self.timer:
-                self.timer -= 1
-            else:
-                self.timer = self.INCREMENT_TIME
-                self.display_count += 1
-                self.color = SCORE_GREEN
-
-        elif self.display_count > self.count:
-            if self.timer:
-                self.timer -= 1
-            else:
-                self.timer = self.INCREMENT_TIME
-                self.display_count -= 1
-                self.color = SCORE_RED
-
+        if self.timer:
+            self.timer -= 1
         else:
-            if self.timer:
-                self.timer -= 1
-            else:
-                self.timer = 0
-                self.color = WHITE
+            self.color = WHITE
 
         self.draw(postSurf)
 
@@ -767,6 +759,7 @@ class Player:
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = SpriteInstance(PLAYER_SPRITE_SHEET)
         self.bullets = []
+        self.dying_bullets = []
         self.bullet_timer = 0
 
         self.corpse_count = 0
@@ -801,7 +794,7 @@ class Player:
                     coin_handler.delete_coin(coin)
                 for enemy in reversed(enemyHandler.enemies):
                     if enemy.dead:
-                        enemy.remove()
+                        enemy.delete()
 
     # movement speed is proportionate to the amount of corpses you carry
     def move_up(self):
@@ -846,6 +839,7 @@ class Player:
                 bullet.body.move()
 
     def destroy_bullet(self, index):
+        self.dying_bullets.append(self.bullets[index])
         del self.bullets[index]
 
     def gun_pos(self):
@@ -923,6 +917,19 @@ class Player:
             pos = camera.pos((bullet.body.x, bullet.body.y))
             surf.blit(bullet.sprite.get_now_frame(), pos)
 
+        i = len(self.dying_bullets)
+        for bullet in reversed(self.dying_bullets):
+            i -= 1
+
+            bullet.sprite.change_anim(BULLET_DIE)
+            bullet.sprite.delay_next(2)
+            pos = camera.pos((bullet.body.x, bullet.body.y))
+            surf.blit(bullet.sprite.get_now_frame(), pos)
+
+            last_frame = bullet.sprite.sheet.frame_counts[BULLET_DIE] - 1
+            if bullet.sprite.current_frame == last_frame:
+                del self.dying_bullets[i]
+
     def draw_corpses(self, surf):
         y = self.body.y - self.sprite.sheet.z_height + PIXEL
 
@@ -931,7 +938,7 @@ class Player:
 
         for i, corpse in enumerate(self.corpses):
             x = self.body.x + (self.body.w / 2 - corpse.body.w / 2)
-            y -= corpse.body.h - PIXEL
+            y -= corpse.body.h
             corpse.body.goto(x, y)
             corpse.draw(surf)
 
@@ -974,7 +981,7 @@ class Player:
         if self.corpse_count < self.MAX_CORPSES:
             self.corpse_count += 1
             self.corpses.append(enemy)
-            enemy.remove()
+            enemy.delete()
 
     def sell_corpses(self):
         if self.corpse_count != 0:
@@ -989,7 +996,7 @@ class Player:
 
     def change_coins(self, amount):
         self.coins += amount
-        coin_counter.count += amount
+        coin_counter.change(amount)
 
     def update(self):
         if mouse_pressed[0]:
@@ -1123,7 +1130,7 @@ class Health:
 
 
 class EnemyHandler:
-    MAX_ENEMIES = 10
+    MAX_ENEMIES = 7
 
     def __init__(self):
         self.enemies = []
@@ -1134,6 +1141,11 @@ class EnemyHandler:
         for enemy in self.enemies:
             if not enemy.dead:
                 enemy.move()
+            else:
+                enemy.body.xVel /= 1.17
+                enemy.body.yVel /= 1.17
+                enemy.body.collide_stage()
+                enemy.body.move()
 
             player.check_hit(enemy)  # hurt and kill enemies
             if enemy.health.zero():
@@ -1142,7 +1154,9 @@ class EnemyHandler:
                 else:
                     enemy.remove()
 
-            enemy.draw_health()
+            if not enemy.removed:
+                enemy.draw_health()
+
             enemy.draw(postSurf)
 
         if self.spawn_timer == 0:
@@ -1172,16 +1186,28 @@ class EnemyHandler:
 
 
 class Shadowhound:
-    sprite = None
+    SHEET = Spritesheet("shadowhound.png", 11, 8, (2, 6, 6, 6, 6, 3, 3, 6, 6, 4, 4))
+    IDLE = 0
+    RUN_LEFT = 1
+    RUN_RIGHT = 2
+    RUN_LEFT_COIN = 3
+    RUN_RIGHT_COIN = 4
+    DIE_LEFT = 5
+    DIE_RIGHT = 6
+    DIEDLE_LEFT = 7
+    DIEDLE_RIGHT = 8
+    REMOVE_LEFT = 9
+    REMOVE_RIGHT = 10
+
     ALIVE_HEALTH = 12
     CORPSE_HEALTH = 2
-    DASH_SPEED = 7
+    DASH_SPEED = 6
     RUN_SPEED = 4
     DASH_TIME = 30
     WAIT_TIME = 90
 
     def __init__(self, x, y):
-        self.body = Body(x, y, PIXEL*12, PIXEL*9)
+        self.body = Body(x, y, PIXEL*11, PIXEL*3)
         self.health = Health(self.ALIVE_HEALTH)
         self.cycle = 120
         self.timer = self.DASH_TIME + self.WAIT_TIME
@@ -1190,8 +1216,15 @@ class Shadowhound:
         self.hasCoin = False
         self.movingTowards = True
 
+        self.sprite = SpriteInstance(self.SHEET)
+        self.sprite.sheet.init_z_height(self.body)
+        self.direction = LEFT
+        self.dead_sprite = False
+
+        self.removed = False
+
         away_angle = -1.5
-        while math.pi * -(3/4) < away_angle < math.pi * -(1/4):
+        while -2.8 < away_angle < 0.8:
             away_angle = math.radians(random.randint(-180, 180))
 
         vel = angle_pos((0, 0), away_angle, self.RUN_SPEED)
@@ -1232,41 +1265,104 @@ class Shadowhound:
                     self.hasCoin = True
                     player.change_coins(-1)
 
+            if player.body.pos_center()[0] < self.body.pos_center()[0]:
+                self.direction = LEFT
+            else:
+                self.direction = RIGHT
+
         else:
             self.body.xVel = self.away_x_vel
             self.body.yVel = self.away_y_vel
             self.body.collide_stage(ENEMY)
             self.body.move()
 
+            if self.body.xVel > 0:
+                self.direction = RIGHT
+            else:
+                self.direction = LEFT
+
             if self.body.out_of_bounds():
                 if self.hasCoin:
                     coin_handler.add(-1)
-                self.remove()
+                self.delete()
                 enemyHandler.enemy_count -= 1
 
     # foolishly, now i have to make a draw, die, and remove command for
     # EVERY enemy type
     def draw(self, surf):
-        if self.dead:
-            self.body.debug_hitbox(surf, RED)
-        elif self.hasCoin:
-            self.body.debug_hitbox(surf, YELLOW)
+        if self.removed:
+            self.sprite.delay_next(4)
+
+            last_frame = self.sprite.sheet.frame_counts[self.REMOVE_LEFT] - 1
+
+            if self.sprite.current_frame == last_frame:
+                if self.sprite.delay == 1:
+                    self.delete()
+                    return
+
+        elif self.dead:
+            if not self.dead_sprite:
+                self.sprite.delay_next(4)
+
+                # assumes DIE_LEFT and DIE_RIGHT have the same amount of frames
+                last_frame = self.sprite.sheet.frame_counts[self.DIE_LEFT] - 1
+
+                if self.sprite.current_frame == last_frame:
+                    if self.sprite.delay == 1:
+                        if self.direction == RIGHT:
+                            self.sprite.change_anim(self.DIEDLE_RIGHT)
+                            self.sprite.current_frame = random.randint(0, 2)
+                        else:
+                            self.sprite.change_anim(self.DIEDLE_LEFT)
+                            self.sprite.current_frame = random.randint(0, 2)
+
+                        self.dead_sprite = True
+
+                else:
+                    if self.direction == RIGHT:
+                        self.sprite.change_anim(self.DIE_RIGHT)
+                    else:
+                        self.sprite.change_anim(self.DIE_LEFT)
+
         else:
-            self.body.debug_hitbox(surf, CYAN)
+            if self.direction == RIGHT:
+                anim = self.RUN_RIGHT
+            else:
+                anim = self.RUN_LEFT
+
+            if self.hasCoin:
+                anim += 2
+
+            self.sprite.change_anim(anim)
+
+            if self.movingTowards and not 6 < self.timer <= self.WAIT_TIME:
+                self.sprite.delay_next(int(self.DASH_TIME / 6))
+            elif self.movingTowards:
+                self.sprite.current_frame = 5
+            else:
+                self.sprite.delay_next(4)
+
+        position = (self.body.x, self.body.y - self.sprite.sheet.z_height)
+        position = camera.pos(position)
+        surf.blit(self.sprite.get_now_frame(), position)
 
     def draw_selected(self):
-        self.body.debug_hitbox(postSurf, PALE_RED)
+        if self.dead and 7 <= self.sprite.current_anim <= 8:
+            anim = self.sprite.current_anim
+            frame = self.sprite.current_frame + 3
+
+            pos = (self.body.x, self.body.y - self.sprite.sheet.z_height)
+            pos = camera.pos(pos)
+            postSurf.blit(self.sprite.sheet.get_frame(anim, frame), pos)
 
     def draw_health(self):
         x = self.body.pos_center()[0] - int(self.health.MAX_W / 2)
-        y = self.body.y - PIXEL * 4
+        y = self.body.y - PIXEL * 7
         self.health.draw(postSurf, camera.pos((x, y)))
 
     def die(self):
         enemyHandler.enemy_count -= 1
         self.dead = True
-        self.body.stop_x()
-        self.body.stop_y()
         self.health.set_max(self.CORPSE_HEALTH)
         self.health.refill()
 
@@ -1275,12 +1371,21 @@ class Shadowhound:
             self.hasCoin = False
 
     def remove(self):
-        enemyHandler.enemies.remove(self)
+        self.removed = True
+        self.dead = False
+        if self.direction == LEFT:
+            self.sprite.change_anim(self.REMOVE_LEFT)
+        else:
+            self.sprite.change_anim(self.REMOVE_RIGHT)
+
+    def delete(self):
+        if self in enemyHandler.enemies:
+            enemyHandler.enemies.remove(self)
 
 
 class UnderworldKing:
     sprite = None
-    SPEED = 5
+    SPEED = 7
 
     def __init__(self):
         x = grid.FULL_H + 50
@@ -1331,7 +1436,8 @@ soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
 SHOP_ENTER = 6 * TILE_H
 SHOP_ENTER_TILE = 5
 
-level_background = load_image("level_template.png")
+level_background = load_image("level_unfinished_2.png")
+level_background.set_colorkey(GREEN)
 
 grid = Grid(15, 20)
 grid.change_rect(0, SHOP_ENTER_TILE, 15, 1, PLAYER_WALL)   # outline
@@ -1365,7 +1471,9 @@ PLAYER_SPRITE_SHEET.init_z_height(player.body.gridbox)
 FAIRY_SPRITE_SHEET = Spritesheet("fairy.png", 5, 6, (4, 4))
 fairy_sprite = SpriteInstance(FAIRY_SPRITE_SHEET)
 
-PLAYER_BULLET_SPRITE_SHEET = Spritesheet("player_bullet.png", 4, 4, (4,))
+PLAYER_BULLET_SPRITE_SHEET = Spritesheet("player_bullet.png", 4, 4, (4, 3))
+BULLET_MOVE = 0
+BULLET_DIE = 1
 
 IDLE = 0
 
