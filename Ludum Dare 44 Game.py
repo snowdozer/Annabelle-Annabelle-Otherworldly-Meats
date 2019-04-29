@@ -24,6 +24,8 @@ GREEN = (0, 255, 0)
 SCORE_GREEN = (27, 226, 66)
 CYAN = (0, 255, 255)
 YELLOW = (255, 255, 0)
+BLOOD_PURPLE = (163, 77, 253)
+DARK_GREY = (30, 30, 30)
 
 # DIRECTIONS
 LEFT = 1
@@ -206,8 +208,6 @@ class ScreenFade:
         postSurf.blit(self.surf, (0, 0))
 
 
-
-
 class Pinhole:
     """inverted circle of black"""
     LOW_PULSE = 55
@@ -215,45 +215,69 @@ class Pinhole:
     SWITCH_DIFF = 0.658
 
     def __init__(self):
-        self.x = 0
-        self.y = 0
+        self.center_pos = (0, 0)
         self.w = int(SCRN_W / PIXEL)
         self.h = int(SCRN_H / PIXEL)
         self.radius = 100
         self.surf = pygame.Surface((self.w, self.h))
         self.surf.set_colorkey(GREEN)
+
         self.contracting = False
+        self.breathing = False
+
+        self.low_radius = 100
+        self.high_radius = 100
 
     def set_position(self, pos):
-        self.x = pos[0]
-        self.y = pos[1]
+        self.center_pos = (int(pos[0] / PIXEL), int(pos[1] / PIXEL))
 
     def set_radius(self, radius):
+        self.radius = radius
         self.surf.fill(BLACK)
-        pygame.draw.circle(self.surf, GREEN, (self.x, self.y), int(radius))
+        pygame.draw.circle(self.surf, GREEN, self.center_pos, int(radius))
 
-    def get_surface(self):
-        return pygame.transform.scale(self.surf, (SCRN_W, SCRN_H))
+    def draw(self):
+        surface = pygame.transform.scale(self.surf, (SCRN_W, SCRN_H))
+        postSurf.blit(surface, (0, 0))
+
+    def set_alpha(self, value):
+        self.surf.set_alpha(value)
+
+    def breathe(self, low_radius, high_radius):
+        self.low_radius = low_radius
+        self.high_radius = high_radius
+        self.breathing = True
+
+    def stop_breathing(self):
+        self.breathing = False
+        self.contracting = False
 
     def update(self):
-        if player.inShop:
+        if player.enteredShop:
+            self.stop_breathing()
             self.contracting = False
-            if self.radius < 100:
-                self.radius *= 1.05
-        else:
+
+        elif player.exitShop:
+            self.breathe(55, 65)
+
+        if self.breathing:
             if self.contracting:
-                if self.radius > self.LOW_PULSE + self.SWITCH_DIFF:
-                    self.radius -= -(self.LOW_PULSE - self.radius) / 50
+                if self.radius > self.low_radius + self.SWITCH_DIFF:
+                    self.radius -= -(self.low_radius - self.radius) / 50
                 else:
                     self.contracting = False
             else:
-                if self.radius < self.HIGH_PULSE - self.SWITCH_DIFF:
-                    self.radius += (self.HIGH_PULSE - self.radius) / 50
+                if self.radius < self.high_radius - self.SWITCH_DIFF:
+                    self.radius += (self.high_radius - self.radius) / 50
                 else:
                     self.contracting = True
 
+        else:
+            if self.radius < 120:
+                self.radius *= 1.1
+
         self.set_radius(self.radius)
-        postSurf.blit(self.get_surface(), (0, 0))
+        self.draw()
 
 
 class Spritesheet:
@@ -390,8 +414,8 @@ class Camera:
 
         self.body = Body(half_width, half_height, 0, 0)
         self.focus_body = None
-        self.constrain_x = True
-        self.constrain_y = True
+        self.constrain_x = False
+        self.constrain_y = False
 
         self.LIMIT_LEFT = half_width - self.EDGE_OFFSET
         self.LIMIT_RIGHT = grid.FULL_W - half_width + self.EDGE_OFFSET
@@ -591,10 +615,9 @@ class Score:
 
 
 class Text:
-    DELETE_FRAME = 120
     SCROLL_FRAME = 2
 
-    def __init__(self, text, pos, scrolling=False, ui=False):
+    def __init__(self, text, pos, scrolling=False, ui=False, delay=120):
         self.x = pos[0]
         self.y = pos[1]
         self.string = text
@@ -603,6 +626,8 @@ class Text:
 
         self.scroll_delay = 0
         self.delete_delay = 0
+
+        self.DELETE_FRAME = delay
 
         self.scrolling = scrolling
         if scrolling:
@@ -640,11 +665,12 @@ class TextHandler:
         self.texts = []
         self.text_count = 0
 
-    def add(self, text, pos, scrolling=False, ui=False):
-        self.texts.append(Text(text, pos, scrolling, ui))
+    def add(self, text, pos, scrolling=False, ui=False, delay=120):
+        self.texts.append(Text(text, pos, scrolling, ui, delay))
         self.text_count += 1
 
     def delete(self, i):
+        self.text_count -= 1
         del self.texts[i]
 
     def update(self):
@@ -885,6 +911,7 @@ class Player:
         """corpse_speeds determines your speed carrying that many corpses"""
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = SpriteInstance(PLAYER_SPRITE_SHEET)
+        self.sprite.current_frame = 0
         self.bullets = []
         self.dying_bullets = []
         self.bullet_timer = 0
@@ -907,7 +934,7 @@ class Player:
         if self.inShop:
             if self.body.pos_center()[1] > SHOP_ENTER:
                 self.inShop = False
-                self.enteredShop = True
+                self.exitShop = True
                 self.change_coins(-1)
                 coin_handler.add(-1)
 
@@ -1246,8 +1273,8 @@ class Health:
         self.current = self.max
         self.w = self.MAX_W
 
-    def draw(self, surf, pos):
-        pygame.draw.rect(surf, RED, (pos[0], pos[1], self.w, self.MAX_H))
+    def draw(self, surf, pos, color):
+        pygame.draw.rect(surf, color, (pos[0], pos[1], self.w, self.MAX_H))
 
     def zero(self):
         if self.current <= 0:
@@ -1388,9 +1415,10 @@ class Shadowhound:
 
                 player_hitbox = player.body.hitbox
                 self_hitbox = self.body.hitbox
-                if not self.hasCoin and collide(self_hitbox, player_hitbox):
-                    self.hasCoin = True
-                    player.change_coins(-1)
+                if not self.hasCoin:
+                    if collide(self_hitbox, player_hitbox) and player.coins > 0:
+                        self.hasCoin = True
+                        player.change_coins(-1)
 
             if player.body.pos_center()[0] < self.body.pos_center()[0]:
                 self.direction = LEFT
@@ -1485,7 +1513,10 @@ class Shadowhound:
     def draw_health(self):
         x = self.body.pos_center()[0] - int(self.health.MAX_W / 2)
         y = self.body.y - PIXEL * 7
-        self.health.draw(postSurf, camera.pos((x, y)))
+        if self.dead:
+            self.health.draw(postSurf, camera.pos((x, y)), BLOOD_PURPLE)
+        else:
+            self.health.draw(postSurf, camera.pos((x, y)), RED)
 
     def die(self):
         enemyHandler.enemy_count -= 1
@@ -1511,14 +1542,14 @@ class Shadowhound:
 
 
 class UnderworldKing:
-    sprite = None
-    SPEED = 7
+    SPEED = 4
 
     def __init__(self):
         x = grid.FULL_H + 50
         y = grid.FULL_W / 2
         self.dead = False   # a constant value
-        self.body = Body(x, y, PIXEL*30, PIXEL*30, PIXEL*-5, PIXEL*-5)
+        self.body = Body(x, y, PIXEL*32, PIXEL*32, PIXEL*-5, PIXEL*-5)
+        self.sprite = SpriteInstance(UNDERWORLD_KING_SHEET)
 
     def move_to(self):
         """move towards the player"""
@@ -1532,7 +1563,8 @@ class UnderworldKing:
         self.body.move()
 
     def draw(self, surf):
-        self.body.debug_gridbox(surf, RED)
+        position = camera.pos((self.body.x, self.body.y))
+        surf.blit(self.sprite.get_now_frame(), position)
 
     def update(self):
         self.move()
@@ -1557,9 +1589,6 @@ MUSIC_UNDERWORLD = 1
 SOUND_SELL = 2
 SOUND_SHOOT = 3
 SOUND_HITWALL = 4
-soundboard.play(MUSIC_SHOP, -1)
-soundboard.play(MUSIC_UNDERWORLD, -1)
-soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
 
 # level
 SHOP_ENTER = 6 * TILE_H
@@ -1595,7 +1624,7 @@ SHOP_RIGHT_WALL = TILE_W * 12
 enemyHandler = EnemyHandler()
 
 PLAYER_SPRITE_SHEET = Spritesheet("player.png", 6, 9, (4, 4, 4, 4, 4))
-player = Player(500, 200, PIXEL*6, PIXEL*4, 0, 0)
+player = Player(250, 240, PIXEL*6, PIXEL*4, 0, 0)
 PLAYER_SPRITE_SHEET.init_z_height(player.body.gridbox)
 IDLE = 0
 
@@ -1611,14 +1640,174 @@ coin_handler = CoinHandler()
 coin_counter = Score(player.coins, (65, 7))
 coin_counter_sprite = SpriteInstance(COIN_SPRITE_SHEET)
 
+UNDERWORLD_KING_SHEET = Spritesheet("underworld_king.png", 32, 32, (1,))
+
 # misc
 SHOP_END = 1
 DEATH_END = 2
 
 camera = Camera()
 pinhole = Pinhole()
+pinhole.set_radius(0)
 screen_fade = ScreenFade()
 text_handler = TextHandler()
+
+
+def menu_loop():
+    global keys
+    global mouse_pos
+    global mouse_pressed
+    global tutorial
+
+    camera.body.goto(SHOP_CENTER[0], SHOP_CENTER[1])
+
+    pinhole.breathe(15, 20)
+    pinhole.set_position(camera.pos(player.body.pos_center()))
+
+    menu_x = 260
+    play_y = 150
+    skip_y = play_y + 32 + 18
+    button_play = pygame.Rect(menu_x - 20, play_y - 10, 260, 32 + 18)
+    button_skip = pygame.Rect(menu_x - 20, skip_y - 10, 260, 32 + 18)
+    text_handler.add("Play Intro/Tutorial", (menu_x, play_y), False, True)
+    text_handler.add("Skip Intro/Tutorial", (menu_x, skip_y), False, True)
+
+    while True:
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pressed = pygame.mouse.get_pressed()
+        keys = pygame.key.get_pressed()
+
+        grid.draw(postSurf)
+
+        position = player.body.x, player.body.y - player.sprite.sheet.z_height
+        postSurf.blit(player.sprite.get_now_frame(), camera.pos(position))
+
+        pinhole.update()
+        debug(1, pinhole.radius)
+        
+        if button_play.collidepoint(mouse_pos[0], mouse_pos[1] - 1):
+            pygame.draw.rect(postSurf, DARK_GREY, button_play)
+            if mouse_pressed[0]:
+                text_handler.delete(1)
+                text_handler.delete(0)
+                tutorial = True
+                break
+
+        elif button_skip.collidepoint(mouse_pos[0], mouse_pos[1] - 1):
+            pygame.draw.rect(postSurf, DARK_GREY, button_skip)
+
+            if mouse_pressed[0]:
+                text_handler.delete(1)
+                text_handler.delete(0)
+                tutorial = False
+                break
+
+        text_handler.update()
+
+        update()
+
+
+def intro_cutscene():
+    pinhole.stop_breathing()
+
+    king_sheet = UNDERWORLD_KING_SHEET
+
+    king_x = 10
+    king_y = 100
+    king_y_cycle = ((10, PIXEL), (30, PIXEL), (50, PIXEL),
+                    (50, -PIXEL), (30, -PIXEL), (10, -PIXEL),
+                    (10, -PIXEL), (30, -PIXEL), (50, -PIXEL),
+                    (50, PIXEL), (30, PIXEL), (10, PIXEL))
+
+    king_y_current = 0
+    king_y_delay = 0
+    king_text_pos = (king_x + 160, king_y + 64)
+
+    player_text_pos = camera.pos((player.body.x + 50, player.body.y - 10))
+    player.sprite.current_frame = 1
+
+    dialogue = (("hey there!", king_text_pos, 60),
+
+                ("Why are you-", player_text_pos, 15),
+
+                ("pop quiz!", king_text_pos, 45),
+                ("what were you doing, oh,", king_text_pos, 45),
+                ("about exactly two months ago?", king_text_pos, 120),
+
+                ("...", player_text_pos, 60),
+                ("The contract for the portal?", player_text_pos, 30),
+
+                ("ding ding ding!", king_text_pos, 15),
+                ("that is correct.", king_text_pos, 15),
+
+                ("You know you can't cancel it.", player_text_pos, 60),
+                ("You can't hurt me, either.", player_text_pos, 60),
+
+                ("yeah yeah!", king_text_pos, 15),
+                ("you're quite the elusive soul.", king_text_pos, 60),
+                ("but so what?", king_text_pos, 45),
+                ("everyone dies at some point,", king_text_pos, 45),
+                ("and i'll gladly savor-", king_text_pos, 15),
+
+                ("I've heard this already.", player_text_pos, 30),
+                ("Could you just get to the point?", player_text_pos, 60),
+
+                ("alright, geez, sweetheart!", king_text_pos, 60),
+                ("here's the point.", king_text_pos, 30),
+                ("*dramatic inhale*", king_text_pos, 15),
+                ("border fees.", king_text_pos, 60),
+
+                ("...", player_text_pos, 60),
+                ("For... the pocket dimension.", player_text_pos, 60),
+
+                ("yes!  what else!", king_text_pos, 60),
+
+                ("You can't just-", player_text_pos, 15),
+
+                ("hey, i don't write the laws.", king_text_pos, 30),
+                ("i'm just the messenger!", king_text_pos, 30),
+                ("to make a long story short,", king_text_pos, 30),
+                ("we're automatically taxing you,", king_text_pos, 30),
+                ("for each border cross.", king_text_pos, 30),
+
+                ("That's...", player_text_pos, 30),
+                ("The underworld hunting grounds", player_text_pos, 30),
+                ("is my main source of income!", player_text_pos, 30),
+
+                ("well, to be fair", king_text_pos, 30),
+                ("running the underworld", king_text_pos, 15),
+                ("doesn't come cheap, either!", king_text_pos, 30),
+
+                ("This is totally-", player_text_pos, 30),
+
+                ("that's all I have to say.", king_text_pos, 30),
+                ("toodle-oo!", king_text_pos, 30),
+
+                ("...", player_text_pos, 120))
+
+    for text in dialogue:
+        text_handler.add(text[0], text[1], True, True, text[2])
+
+        while text_handler.texts:
+            grid.draw(postSurf)
+
+            pos = player.body.x, player.body.y - player.sprite.sheet.z_height
+            postSurf.blit(player.sprite.get_now_frame(), camera.pos(pos))
+
+            postSurf.blit(king_sheet.get_frame(0, 0), (king_x, king_y))
+
+            if king_y_delay < king_y_cycle[king_y_current][0]:
+                king_y_delay += 1
+            else:
+                king_y_delay = 0
+                king_y += king_y_cycle[king_y_current][1]
+                king_y_current = (king_y_current + 1) % 12
+
+            text_handler.update()
+
+            pinhole.update()
+
+            update()
 
 
 def game_loop():
@@ -1628,22 +1817,19 @@ def game_loop():
     global right_mouse_released
     global ending
 
-    camera.autolock(grid)
+    soundboard.play(MUSIC_SHOP, -1)
+    soundboard.play(MUSIC_UNDERWORLD, -1)
+    soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
+
     camera.change_focus(player.body)
 
-    pinhole.set_position((int(125 / 2), int(125 / 2)))
+    pinhole.stop_breathing()
 
     right_mouse_last = False
     right_mouse_released = False
 
-    text_handler.add("This is a test.", (50, 50), False, True)
-    text_handler.add("This is also a text.", (50, 100), True)
-
     ending = 0
     underworld_king = None
-
-    screen_fade.set_transparency(0)
-    screen_fade.fade_from_black()
 
     while True:
         # mouse handling & right click flag
@@ -1679,16 +1865,18 @@ def game_loop():
 
         elif ending == DEATH_END:
             underworld_king.update()
-            if screen_fade.transparency == 255:
-                break
+
             if underworld_king.collide_player():
-                screen_fade.fade_to_black()
+                break
 
         elif ending == SHOP_END:
             screen_fade.fade_to_black()
             if screen_fade.transparency == 255:
                 break
 
+        if pinhole.radius > 100:
+            pinhole.set_position((int(SCRN_W / 2), int(SCRN_H / 2)))
+            pinhole.set_alpha(200)
         pinhole.update()
 
         coin_counter.update()
@@ -1698,8 +1886,8 @@ def game_loop():
         text_handler.update()
         screen_fade.update()
 
-        debug(0, screen_fade.fade_in)
-        debug(1, screen_fade.transparency)
+        # debug(0, player.exitShop)
+        # debug(1, screen_fade.transparency)
         # debug(0, "FPS: %.2f" % clock.get_fps())
         # debug(2, "gun_pos", player.gun_pos())
         # debug(4, "camera %.2f %.2f" % (camera.body.x, camera.body.y))
@@ -1718,10 +1906,14 @@ def game_loop():
         # debug(21, "anim frame", player.sprite.current_frame)
         #
         # debug(23, "pinhole radius", pinhole.radius)
-        if keys[pygame.K_f]:
-            update(True)  # slows down fps
-        else:
-            update()
 
+        update()
+
+
+pygame.time.wait(2000)
+menu_loop()
+
+if tutorial:
+    intro_cutscene()
 
 game_loop()
