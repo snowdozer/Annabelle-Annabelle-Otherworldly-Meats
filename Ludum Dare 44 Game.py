@@ -155,6 +155,59 @@ def load_image(path):
     return resized
 
 
+class ScreenFade:
+    FADE_STEP = 1
+
+    def __init__(self):
+        self.w = SCRN_W
+        self.h = SCRN_H
+        self.surf = pygame.Surface((SCRN_W, SCRN_H))
+        self.transparency = 0
+        self.fade_in = False
+        self.fade_out = False
+        self.target = 0
+
+    def fade_to_black(self):
+        self.fade_in = False
+        self.fade_out = True
+        self.target = 255
+
+    def fade_from_black(self):
+        self.fade_in = True
+        self.fade_out = False
+        self.target = 0
+
+    def set_transparency(self, value):
+        self.transparency = 255 - value
+
+    def fade_to(self, value):
+        self.target = value
+        if self.transparency < 255 - value:
+            self.fade_in = False
+            self.fade_out = True
+        else:
+            self.fade_in = True
+            self.fade_out = False
+
+    def update(self):
+        if self.fade_out:
+            self.transparency += self.FADE_STEP
+            if self.transparency > self.target:
+                self.transparency = self.target
+                self.fade_out = False
+
+        elif self.fade_in:
+            self.transparency -= self.FADE_STEP
+            if self.transparency < self.target:
+                self.transparency = self.target
+                self.fade_in = False
+
+        self.surf.set_alpha(self.transparency)
+        postSurf.blit(self.surf, (0, 0))
+
+
+
+
 class Pinhole:
     """inverted circle of black"""
     LOW_PULSE = 55
@@ -353,7 +406,7 @@ class Camera:
         """moves one step towards a specific point"""
         distance_x = (x - self.body.x) / 10
         distance_y = (y - self.body.y) / 10
-        debug(5, "camera step distance %.2f %.2f" % (distance_x, distance_y))
+        # debug(5, "camera step distance %.2f %.2f" % (distance_x, distance_y))
         self.body.goto(self.body.x + distance_x, self.body.y + distance_y)
 
     def focus(self, x_off=0, y_off=0):
@@ -949,7 +1002,7 @@ class Player:
     def draw(self, surf):
         """draws the player"""
         angle = angle_of(camera.pos(player.body.pos_center()), mouse_pos)
-        debug(20, angle)
+        # debug(20, angle)
         if math.pi * -(3/4) < angle < math.pi * -(1/4):
             direction = UP
         elif math.pi * -(1/4) < angle < math.pi * (1/4):
@@ -1492,6 +1545,7 @@ class UnderworldKing:
         return False
 
 
+# sound
 soundboard = Soundboard()
 soundboard.add("shop.wav")
 soundboard.add("underworld.wav")
@@ -1507,6 +1561,7 @@ soundboard.play(MUSIC_SHOP, -1)
 soundboard.play(MUSIC_UNDERWORLD, -1)
 soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
 
+# level
 SHOP_ENTER = 6 * TILE_H
 SHOP_ENTER_TILE = 5
 
@@ -1536,11 +1591,13 @@ SHOP_CENTER = (int(grid.FULL_W / 2), int(SHOP_ENTER / 2))
 SHOP_LEFT_WALL = TILE_W * 3
 SHOP_RIGHT_WALL = TILE_W * 12
 
+# sprites and entities
 enemyHandler = EnemyHandler()
 
 PLAYER_SPRITE_SHEET = Spritesheet("player.png", 6, 9, (4, 4, 4, 4, 4))
 player = Player(500, 200, PIXEL*6, PIXEL*4, 0, 0)
 PLAYER_SPRITE_SHEET.init_z_height(player.body.gridbox)
+IDLE = 0
 
 FAIRY_SPRITE_SHEET = Spritesheet("fairy.png", 5, 6, (4, 4))
 fairy_sprite = SpriteInstance(FAIRY_SPRITE_SHEET)
@@ -1549,96 +1606,122 @@ PLAYER_BULLET_SPRITE_SHEET = Spritesheet("player_bullet.png", 4, 4, (4, 3))
 BULLET_MOVE = 0
 BULLET_DIE = 1
 
-IDLE = 0
-
-camera = Camera()
-camera.autolock(grid)
-camera.change_focus(player.body)
-
-pinhole = Pinhole()
-pinhole.set_position((int(125 / 2), int(125 / 2)))
-
-right_mouse_last = False
-right_mouse_released = False
-
 COIN_SPRITE_SHEET = Spritesheet("coin.png", 7, 7, (5,))
 coin_handler = CoinHandler()
 coin_counter = Score(player.coins, (65, 7))
 coin_counter_sprite = SpriteInstance(COIN_SPRITE_SHEET)
 
-text_handler = TextHandler()
-text_handler.add("This is a test.", (50, 50), False, True)
-text_handler.add("This is also a text.", (50, 100), True)
-
-ending = 0
+# misc
 SHOP_END = 1
 DEATH_END = 2
-underworld_king = None
 
-while True:
-    # mouse handling & right click flag
-    mouse_pos = pygame.mouse.get_pos()
-    mouse_pressed = pygame.mouse.get_pressed()
+camera = Camera()
+pinhole = Pinhole()
+screen_fade = ScreenFade()
+text_handler = TextHandler()
 
-    if right_mouse_released:
-        right_mouse_released = False
-    if right_mouse_last and not mouse_pressed[2]:
-        right_mouse_released = True
-    right_mouse_last = mouse_pressed[2]
 
-    keys = pygame.key.get_pressed()
+def game_loop():
+    global keys
+    global mouse_pos
+    global mouse_pressed
+    global right_mouse_released
+    global ending
 
-    grid.draw(postSurf)
-    enemyHandler.update()
-    player.update()
-    soundboard.update()
-    camera.handle()
+    camera.autolock(grid)
+    camera.change_focus(player.body)
 
-    coin_handler.update_coins()
+    pinhole.set_position((int(125 / 2), int(125 / 2)))
 
-    # check for lose conditions
-    if not ending:
-        if coin_handler.coin_count == 0:
-            if player.inShop and not player.corpses:
-                ending = SHOP_END
-            elif not player.inShop:
-                ending = DEATH_END
-                enemyHandler.kill_all()
-                enemyHandler.enemy_count = enemyHandler.MAX_ENEMIES
-                underworld_king = UnderworldKing()
+    right_mouse_last = False
+    right_mouse_released = False
 
-    if underworld_king:
-        underworld_king.update()
-        if underworld_king.collide_player():
-            break
+    text_handler.add("This is a test.", (50, 50), False, True)
+    text_handler.add("This is also a text.", (50, 100), True)
 
-    pinhole.update()
+    ending = 0
+    underworld_king = None
 
-    coin_counter.update()
-    # coin_counter_sprite.delay_next(6)
-    postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
+    screen_fade.set_transparency(0)
+    screen_fade.fade_from_black()
 
-    text_handler.update()
+    while True:
+        # mouse handling & right click flag
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pressed = pygame.mouse.get_pressed()
 
-    debug(0, "FPS: %.2f" % clock.get_fps())
-    debug(2, "gun_pos", player.gun_pos())
-    debug(4, "camera %.2f %.2f" % (camera.body.x, camera.body.y))
-    debug(6, "enemies", enemyHandler.enemies)
-    debug(7, "coins", coin_handler.coin_count)
-    debug(11, "carrying", player.corpses)
-    debug(13, "in_shop?", player.inShop)
+        if right_mouse_released:
+            right_mouse_released = False
+        if right_mouse_last and not mouse_pressed[2]:
+            right_mouse_released = True
+        right_mouse_last = mouse_pressed[2]
 
-    debug(15, "enemy count", enemyHandler.enemy_count)
-    debug(16, "spawn timer", enemyHandler.spawn_timer)
+        keys = pygame.key.get_pressed()
 
-    debug(18, "ending", ending)
+        grid.draw(postSurf)
+        enemyHandler.update()
+        player.update()
+        soundboard.update()
+        camera.handle()
 
-    debug(19, "yvel", player.body.y, player.body.yVel)
+        coin_handler.update_coins()
 
-    debug(21, "anim frame", player.sprite.current_frame)
+        # check for lose conditions
+        if not ending:
+            if coin_handler.coin_count == 0:
+                if player.inShop and not player.corpses:
+                    ending = SHOP_END
+                elif not player.inShop:
+                    ending = DEATH_END
+                    enemyHandler.kill_all()
+                    enemyHandler.enemy_count = enemyHandler.MAX_ENEMIES
+                    underworld_king = UnderworldKing()
 
-    debug(23, "pinhole radius", pinhole.radius)
-    if keys[pygame.K_f]:
-        update(True)   # slows down fps
-    else:
-        update()
+        elif ending == DEATH_END:
+            underworld_king.update()
+            if screen_fade.transparency == 255:
+                break
+            if underworld_king.collide_player():
+                screen_fade.fade_to_black()
+
+        elif ending == SHOP_END:
+            screen_fade.fade_to_black()
+            if screen_fade.transparency == 255:
+                break
+
+        pinhole.update()
+
+        coin_counter.update()
+        # coin_counter_sprite.delay_next(6)
+        postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
+
+        text_handler.update()
+        screen_fade.update()
+
+        debug(0, screen_fade.fade_in)
+        debug(1, screen_fade.transparency)
+        # debug(0, "FPS: %.2f" % clock.get_fps())
+        # debug(2, "gun_pos", player.gun_pos())
+        # debug(4, "camera %.2f %.2f" % (camera.body.x, camera.body.y))
+        # debug(6, "enemies", enemyHandler.enemies)
+        # debug(7, "coins", coin_handler.coin_count)
+        # debug(11, "carrying", player.corpses)
+        # debug(13, "in_shop?", player.inShop)
+        #
+        # debug(15, "enemy count", enemyHandler.enemy_count)
+        # debug(16, "spawn timer", enemyHandler.spawn_timer)
+        #
+        # debug(18, "ending", ending)
+        #
+        # debug(19, "yvel", player.body.y, player.body.yVel)
+        #
+        # debug(21, "anim frame", player.sprite.current_frame)
+        #
+        # debug(23, "pinhole radius", pinhole.radius)
+        if keys[pygame.K_f]:
+            update(True)  # slows down fps
+        else:
+            update()
+
+
+game_loop()
