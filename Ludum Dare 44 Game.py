@@ -1129,11 +1129,15 @@ class Player:
 
     def collect_coins(self):
         i = coin_handler.ground_coin_count
+        collected = False
         for coin in reversed(coin_handler.coins):
             i -= 1
             if collide(coin.body.gridbox, player.body.gridbox):
                 coin_handler.delete_coin(i)
                 self.change_coins(1)
+                collected = True
+        if collected:
+            soundboard.play(SOUND_COLLECT)
 
     def pickup_corpse(self, enemy):
         if self.corpse_count < self.MAX_CORPSES:
@@ -1424,6 +1428,8 @@ class Shadowhound:
                         self.hasCoin = True
                         player.change_coins(-1)
 
+                        soundboard.play(SOUND_COLLECT)
+
             if player.body.pos_center()[0] < self.body.pos_center()[0]:
                 self.direction = LEFT
             else:
@@ -1539,6 +1545,7 @@ class Shadowhound:
             self.sprite.change_anim(self.REMOVE_LEFT)
         else:
             self.sprite.change_anim(self.REMOVE_RIGHT)
+        soundboard.play(random.choice(SOUND_SQUELCH))
 
     def delete(self):
         if self in enemyHandler.enemies:
@@ -1546,7 +1553,7 @@ class Shadowhound:
 
 
 class UnderworldKing:
-    SPEED = 4
+    SPEED = 2
 
     def __init__(self):
         x = grid.FULL_H + 50
@@ -1588,11 +1595,21 @@ soundboard.add("underworld.wav")
 soundboard.add("sell.wav")
 soundboard.add("shoot.wav")
 soundboard.add("hitwall.wav")
+soundboard.add("yelp.wav")
+soundboard.add("squelch1.wav")
+soundboard.add("squelch2.wav")
+soundboard.add("squelch3.wav")
+soundboard.add("collect.wav")
+soundboard.add("steal.wav")
 MUSIC_SHOP = 0
 MUSIC_UNDERWORLD = 1
 SOUND_SELL = 2
 SOUND_SHOOT = 3
 SOUND_HITWALL = 4
+SOUND_SQUELCH = (5, 6, 7)
+SOUND_YELP = 8
+SOUND_COLLECT = 9
+SOUND_STEAL = 10
 
 # level
 SHOP_ENTER = 6 * TILE_H
@@ -1661,8 +1678,8 @@ pinhole.set_radius(0)
 screen_fade = ScreenFade()
 text_handler = TextHandler()
 
-PORTAL = Spritesheet("portal.png", 56, 24, (1,))
-ARCH = Spritesheet("arch_top.png", 14, 14, (1,))
+PORTAL_SHEET = Spritesheet("portal_frame.png", 56, 44, (12,))
+PORTAL = SpriteInstance(PORTAL_SHEET)
 
 def menu_loop():
     global keys
@@ -1758,7 +1775,7 @@ def intro_cutscene():
                 ("you're quite the elusive soul.", king_text_pos, 60),
                 ("but so what?", king_text_pos, 45),
                 ("everyone dies at some point,", king_text_pos, 45),
-                ("and i'll gladly savor-", king_text_pos, 15),
+                ("and i'll gladly savor the mom-", king_text_pos, 15),
 
                 ("I've heard this spiel already.", player_text_pos, 30),
                 ("Just get to the point, please.", player_text_pos, 60),
@@ -1798,6 +1815,7 @@ def intro_cutscene():
 
                 ("...", player_text_pos, 120))
 
+    alpha = 255
     for text in dialogue:
         text_handler.add(text[0], text[1], True, True, text[2])
 
@@ -1808,6 +1826,9 @@ def intro_cutscene():
             postSurf.blit(player.sprite.get_now_frame(), camera.pos(pos))
 
             postSurf.blit(king_sheet.get_frame(0, 0), (king_x, king_y))
+
+            PORTAL.delay_next(4)
+            postSurf.blit(PORTAL.get_now_frame(), camera.pos((78 * PIXEL, 42 * PIXEL)))
 
             if king_y_delay < king_y_cycle[king_y_current][0]:
                 king_y_delay += 1
@@ -1821,9 +1842,15 @@ def intro_cutscene():
             else:
                 text_handler.update()
 
+            if text is dialogue[-3]:
+                alpha -= 5
+                UNDERWORLD_KING_SHEET.surface.set_alpha(alpha)
+
             pinhole.update()
 
             update()
+
+    UNDERWORLD_KING_SHEET.surface.set_alpha(255)
 
 
 def tutorial_loop():
@@ -1910,10 +1937,14 @@ def tutorial_loop():
                 tutorial = False
                 break
 
+        PORTAL.delay_next(4)
+
+        if not player.inShop:
+            postSurf.blit(PORTAL.get_now_frame(), camera.pos((78 * PIXEL, 42 * PIXEL)))
         player.update()
         if player.inShop:
-            postSurf.blit(PORTAL.get_frame(0, 0), camera.pos((78 * PIXEL, 63 * PIXEL)))
-        postSurf.blit(ARCH.get_frame(0, 0), camera.pos((98 * PIXEL, 42 * PIXEL)))
+            postSurf.blit(PORTAL.get_now_frame(), camera.pos((78 * PIXEL, 42 * PIXEL)))
+
         soundboard.update()
         camera.handle()
 
@@ -1998,9 +2029,13 @@ def game_loop():
         grid.draw(postSurf)
         enemyHandler.update()
         player.update()
+
+        PORTAL.delay_next(4)
+        if not player.inShop:
+            postSurf.blit(PORTAL.get_now_frame(), camera.pos((78 * PIXEL, 42 * PIXEL)))
         if player.inShop:
-            postSurf.blit(PORTAL.get_frame(0, 0), camera.pos((78*PIXEL, 63*PIXEL)))
-        postSurf.blit(ARCH.get_frame(0, 0), camera.pos((98*PIXEL, 42*PIXEL)))
+            postSurf.blit(PORTAL.get_now_frame(), camera.pos((78*PIXEL, 42*PIXEL)))
+
         soundboard.update()
         camera.handle()
 
