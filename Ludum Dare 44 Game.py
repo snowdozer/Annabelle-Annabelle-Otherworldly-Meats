@@ -363,6 +363,7 @@ class Soundboard:
     def __init__(self):
         self.music_id = 0
         self.sounds = []
+        self.already_playing = False
 
     def add(self, file_path):
         file_path = os.path.join("sounds", file_path)
@@ -637,13 +638,16 @@ class Text:
 
         self.ui = ui
 
-    def render(self):
+    def render(self, king_text=False):
         if self.ui:
             position = (self.x, self.y)
         else:
             position = camera.pos((self.x, self.y))
 
-        text = FONT_SMALL.render(self.string[: self.completion], False, WHITE)
+        if king_text:
+            text = FONT_SMALL.render(self.string[: self.completion], False, BLACK)
+        else:
+            text = FONT_SMALL.render(self.string[: self.completion], False, WHITE)
         postSurf.blit(text, position)
 
     def scroll(self):
@@ -673,11 +677,11 @@ class TextHandler:
         self.text_count -= 1
         del self.texts[i]
 
-    def update(self):
+    def update(self, king_text=False):
         i = self.text_count
         for text in reversed(self.texts):
             i -= 1
-            text.render()
+            text.render(king_text)
 
             if text.scrolling:
                 if text.completion < text.letters:
@@ -911,7 +915,7 @@ class Player:
         """corpse_speeds determines your speed carrying that many corpses"""
         self.body = Body(x, y, w, h, extend_x, extend_y)
         self.sprite = SpriteInstance(PLAYER_SPRITE_SHEET)
-        self.sprite.current_frame = 0
+        self.sprite.current_frame = 1
         self.bullets = []
         self.dying_bullets = []
         self.bullet_timer = 0
@@ -1140,7 +1144,7 @@ class Player:
     def sell_corpses(self):
         if self.corpse_count != 0:
             for _ in range(self.corpse_count):
-                coin_handler.spawn_coin_drop(SHOP_CENTER)
+                coin_handler.spawn_coin_drop((300, 100))
                 coin_handler.add(1)
 
             self.corpse_count = 0
@@ -1594,7 +1598,7 @@ SOUND_HITWALL = 4
 SHOP_ENTER = 6 * TILE_H
 SHOP_ENTER_TILE = 5
 
-level_background = load_image("level_unfinished_2.png")
+level_background = load_image("level.png")
 level_background.set_colorkey(GREEN)
 
 grid = Grid(15, 20)
@@ -1612,6 +1616,11 @@ grid.change_rect(3, 0, 8, 1, ALL_WALL)   # shop walls
 grid.change_rect(3, 0, 1, SHOP_ENTER_TILE, ALL_WALL)
 grid.change_rect(11, 0, 1, SHOP_ENTER_TILE, ALL_WALL)
 grid.change_rect(3, SHOP_ENTER_TILE, 9, 1, ALL_WALL)
+
+grid.change_rect(7, 1, 4, 1, ALL_WALL)   # shop collidables
+grid.change_rect(4, 3, 3, 1, ALL_WALL)
+grid.change_rect(8, 3, 3, 1, ALL_WALL)
+grid.change_rect(9, 3, 1, 2, ALL_WALL)
 grid.change_rect(6, SHOP_ENTER_TILE, 3, 1, ENEMY_WALL)   # shop entrance
 
 grid.create_surf()
@@ -1624,7 +1633,7 @@ SHOP_RIGHT_WALL = TILE_W * 12
 enemyHandler = EnemyHandler()
 
 PLAYER_SPRITE_SHEET = Spritesheet("player.png", 6, 9, (4, 4, 4, 4, 4))
-player = Player(250, 240, PIXEL*6, PIXEL*4, 0, 0)
+player = Player(540, 115, PIXEL*6, PIXEL*4, 0, 0)
 PLAYER_SPRITE_SHEET.init_z_height(player.body.gridbox)
 IDLE = 0
 
@@ -1652,6 +1661,8 @@ pinhole.set_radius(0)
 screen_fade = ScreenFade()
 text_handler = TextHandler()
 
+PORTAL = Spritesheet("portal.png", 56, 24, (1,))
+ARCH = Spritesheet("arch_top.png", 14, 14, (1,))
 
 def menu_loop():
     global keys
@@ -1664,8 +1675,8 @@ def menu_loop():
     pinhole.breathe(15, 20)
     pinhole.set_position(camera.pos(player.body.pos_center()))
 
-    menu_x = 260
-    play_y = 150
+    menu_x = 40
+    play_y = 340
     skip_y = play_y + 32 + 18
     button_play = pygame.Rect(menu_x - 20, play_y - 10, 260, 32 + 18)
     button_skip = pygame.Rect(menu_x - 20, skip_y - 10, 260, 32 + 18)
@@ -1683,7 +1694,7 @@ def menu_loop():
         postSurf.blit(player.sprite.get_now_frame(), camera.pos(position))
 
         pinhole.update()
-        debug(1, pinhole.radius)
+        # debug(1, pinhole.radius)
         
         if button_play.collidepoint(mouse_pos[0], mouse_pos[1] - 1):
             pygame.draw.rect(postSurf, DARK_GREY, button_play)
@@ -1712,8 +1723,8 @@ def intro_cutscene():
 
     king_sheet = UNDERWORLD_KING_SHEET
 
-    king_x = 10
-    king_y = 100
+    king_x = 30
+    king_y = 110
     king_y_cycle = ((10, PIXEL), (30, PIXEL), (50, PIXEL),
                     (50, -PIXEL), (30, -PIXEL), (10, -PIXEL),
                     (10, -PIXEL), (30, -PIXEL), (50, -PIXEL),
@@ -1721,10 +1732,10 @@ def intro_cutscene():
 
     king_y_current = 0
     king_y_delay = 0
-    king_text_pos = (king_x + 160, king_y + 64)
+    king_text_pos = (king_x + 140, king_y + 64)
 
-    player_text_pos = camera.pos((player.body.x + 50, player.body.y - 10))
-    player.sprite.current_frame = 1
+    player_text_pos = camera.pos((player.body.x - 200, player.body.y + 10))
+    player.sprite.current_frame = 0
 
     dialogue = (("hey there!", king_text_pos, 60),
 
@@ -1735,7 +1746,7 @@ def intro_cutscene():
                 ("about exactly two months ago?", king_text_pos, 120),
 
                 ("...", player_text_pos, 60),
-                ("The contract for the portal?", player_text_pos, 30),
+                ("Signing the portal contract?", player_text_pos, 30),
 
                 ("ding ding ding!", king_text_pos, 15),
                 ("that is correct.", king_text_pos, 15),
@@ -1749,25 +1760,27 @@ def intro_cutscene():
                 ("everyone dies at some point,", king_text_pos, 45),
                 ("and i'll gladly savor-", king_text_pos, 15),
 
-                ("I've heard this already.", player_text_pos, 30),
-                ("Could you just get to the point?", player_text_pos, 60),
+                ("I've heard this spiel already.", player_text_pos, 30),
+                ("Just get to the point, please.", player_text_pos, 60),
 
-                ("alright, geez, sweetheart!", king_text_pos, 60),
+                ("alright, geez, alright!", king_text_pos, 60),
                 ("here's the point.", king_text_pos, 30),
                 ("*dramatic inhale*", king_text_pos, 15),
+                ("the underworld now has ", king_text_pos, 60),
                 ("border fees.", king_text_pos, 60),
 
                 ("...", player_text_pos, 60),
-                ("For... the pocket dimension.", player_text_pos, 60),
+                ("So...", player_text_pos, 60),
+                ("I have to pay for the portal?", player_text_pos, 60),
 
-                ("yes!  what else!", king_text_pos, 60),
+                ("yes!  what did you think!", king_text_pos, 60),
 
-                ("You can't just-", player_text_pos, 15),
+                ("What?!  You can't just-", player_text_pos, 15),
 
                 ("hey, i don't write the laws.", king_text_pos, 30),
                 ("i'm just the messenger!", king_text_pos, 30),
                 ("to make a long story short,", king_text_pos, 30),
-                ("we're automatically taxing you,", king_text_pos, 30),
+                ("we're automatically taxing you", king_text_pos, 30),
                 ("for each border cross.", king_text_pos, 30),
 
                 ("That's...", player_text_pos, 30),
@@ -1803,11 +1816,144 @@ def intro_cutscene():
                 king_y += king_y_cycle[king_y_current][1]
                 king_y_current = (king_y_current + 1) % 12
 
-            text_handler.update()
+            if text[1] is king_text_pos:
+                text_handler.update(True)
+            else:
+                text_handler.update()
 
             pinhole.update()
 
             update()
+
+
+def tutorial_loop():
+    global tutorial
+    global keys
+    global mouse_pos
+    global mouse_pressed
+    global right_mouse_released
+    global ending
+
+    tutorial = True
+
+    enemyHandler.MAX_ENEMIES = 1
+
+    soundboard.play(MUSIC_SHOP, -1)
+    soundboard.play(MUSIC_UNDERWORLD, -1)
+    soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
+    soundboard.already_playing = True
+
+    camera.change_focus(player.body)
+
+    pinhole.stop_breathing()
+
+    right_mouse_last = False
+    right_mouse_released = False
+
+    ending = 0
+    underworld_king = None
+
+    text_handler.add("WASD to move.", (350, 100))
+
+    tutorial_stage = 0
+
+    while True:
+        # mouse handling & right click flag
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pressed = pygame.mouse.get_pressed()
+
+        if right_mouse_released:
+            right_mouse_released = False
+        if right_mouse_last and not mouse_pressed[2]:
+            right_mouse_released = True
+        right_mouse_last = mouse_pressed[2]
+
+        keys = pygame.key.get_pressed()
+
+        grid.draw(postSurf)
+        enemyHandler.update()
+        if tutorial_stage == 0 and not player.inShop:
+            tutorial_stage = 1
+            text_handler.delete(0)
+            text_handler.add("Left click to shoot.", (330, 500))
+            text_handler.add("Careful not to let your coins get stolen.", (220, 530))
+
+        elif tutorial_stage == 1 and enemyHandler.enemy_count == 1 and enemyHandler.enemies[0].dead:
+            tutorial_stage = 2
+            text_handler.delete(1)
+            text_handler.delete(0)
+            text_handler.add("Right click near an enemy to pick it up.", (215, 500))
+            text_handler.add("You can pick up five enemies at once.", (225, 530))
+
+        elif tutorial_stage == 2 and player.corpse_count == 1:
+            tutorial_stage = 3
+            text_handler.delete(1)
+            text_handler.delete(0)
+            text_handler.add("Bring the corpse to the shop.", (265, 400))
+
+        elif tutorial_stage == 3 and player.inShop:
+            tutorial_stage = 4
+            text_handler.delete(0)
+            text_handler.add("Right click to sell your corpses.", (265, 100))
+
+        elif tutorial_stage == 4 and right_mouse_released:
+            tutorial_stage = 5
+            text_handler.delete(0)
+            text_handler.add("Well done!  Go make some money.", (260, 100))
+            timer = 0
+
+        elif tutorial_stage == 5:
+            if timer < 300:
+                timer += 1
+            else:
+                text_handler.delete(0)
+                tutorial = False
+                break
+
+        player.update()
+        if player.inShop:
+            postSurf.blit(PORTAL.get_frame(0, 0), camera.pos((78 * PIXEL, 63 * PIXEL)))
+        postSurf.blit(ARCH.get_frame(0, 0), camera.pos((98 * PIXEL, 42 * PIXEL)))
+        soundboard.update()
+        camera.handle()
+
+        coin_handler.update_coins()
+
+        # check for lose conditions
+        if not ending:
+            if coin_handler.coin_count == 0:
+                if player.inShop and not player.corpses:
+                    ending = SHOP_END
+                elif not player.inShop:
+                    ending = DEATH_END
+                    enemyHandler.kill_all()
+                    enemyHandler.enemy_count = enemyHandler.MAX_ENEMIES
+                    underworld_king = UnderworldKing()
+
+        elif ending == DEATH_END:
+            underworld_king.update()
+
+            if underworld_king.collide_player():
+                break
+
+        elif ending == SHOP_END:
+            screen_fade.fade_to_black()
+            if screen_fade.transparency == 255:
+                break
+
+        if pinhole.radius > 100:
+            pinhole.set_position((int(SCRN_W / 2), int(SCRN_H / 2)))
+            pinhole.set_alpha(200)
+        pinhole.update()
+
+        coin_counter.update()
+        # coin_counter_sprite.delay_next(6)
+        postSurf.blit(coin_counter_sprite.get_now_frame(), (20, 22))
+
+        text_handler.update()
+        screen_fade.update()
+
+        update()
 
 
 def game_loop():
@@ -1817,9 +1963,14 @@ def game_loop():
     global right_mouse_released
     global ending
 
-    soundboard.play(MUSIC_SHOP, -1)
-    soundboard.play(MUSIC_UNDERWORLD, -1)
-    soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
+    tutorial = False
+
+    enemyHandler.MAX_ENEMIES = 7
+
+    if not soundboard.already_playing:
+        soundboard.play(MUSIC_SHOP, -1)
+        soundboard.play(MUSIC_UNDERWORLD, -1)
+        soundboard.sounds[MUSIC_UNDERWORLD].set_volume(0)
 
     camera.change_focus(player.body)
 
@@ -1847,6 +1998,9 @@ def game_loop():
         grid.draw(postSurf)
         enemyHandler.update()
         player.update()
+        if player.inShop:
+            postSurf.blit(PORTAL.get_frame(0, 0), camera.pos((78*PIXEL, 63*PIXEL)))
+        postSurf.blit(ARCH.get_frame(0, 0), camera.pos((98*PIXEL, 42*PIXEL)))
         soundboard.update()
         camera.handle()
 
@@ -1915,5 +2069,6 @@ menu_loop()
 
 if tutorial:
     intro_cutscene()
+    tutorial_loop()
 
 game_loop()
